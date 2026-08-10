@@ -20,7 +20,7 @@ from supabase import create_client, ClientOptions
 from croniter import croniter
 
 from backend.email_render import render_email_html
-from backend.main import resolve_doc_references
+from backend.main import resolve_doc_references, extract_json, build_user_message
 
 
 # ── Clientes ──────────────────────────────────────────────────────────────────
@@ -86,22 +86,7 @@ async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str
 
     system_prompt = sp_template.replace("{ctx}", ctx_text)
 
-    ejes_str  = ", ".join(config.get("ejes", []))
-    periodo   = config.get("periodo_dias", 7)
-    num_items = config.get("num_items", 4)
-    audiencia = config.get("audiencia", "Juan Carlos Camelo")
-    notas     = config.get("notas", "")
-    hoy       = datetime.date.today().isoformat()
-
-    user_msg = (
-        f"Genera el newsletter ejecutivo semanal para {audiencia}.\n"
-        f"Fecha de hoy: {hoy}.\n"
-        f"Ejes temáticos: {ejes_str or 'todos los relevantes'}.\n"
-        f"Período cubierto: últimos {periodo} días.\n"
-        f"Número de ítems: {num_items}.\n"
-        + (f"Notas adicionales: {notas}\n" if notas else "")
-        + "\nResponde exclusivamente con el JSON estructurado del newsletter."
-    )
+    user_msg = build_user_message(config)
 
     VALID = {"claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6"}
     model = config.get("model", "claude-sonnet-4-6")
@@ -119,7 +104,7 @@ async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str
 
     async with client.messages.stream(
         model=model,
-        max_tokens=4096,
+        max_tokens=8192,
         system=system_prompt,
         tools=tools,
         messages=[{"role": "user", "content": user_msg}],
@@ -148,19 +133,8 @@ async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str
                         pass
 
     # Extraer JSON
-    start = full_text.find("{")
-    if start == -1:
-        raise ValueError("Claude no devolvió JSON")
-    depth = 0
-    for i, ch in enumerate(full_text[start:], start=start):
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                newsletter_json = json.loads(full_text[start: i + 1])
-                return newsletter_json, search_queries
-    raise ValueError("JSON desbalanceado en la respuesta de Claude")
+    newsletter_json = extract_json(full_text)
+    return newsletter_json, search_queries
 
 
 # ── Envío de email vía Resend ─────────────────────────────────────────────────

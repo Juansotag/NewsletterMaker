@@ -200,6 +200,16 @@ function resetOutput() {
 </div>`;
 }
 
+function formatUrl(url) {
+  if (!url) return '';
+  url = String(url).trim();
+  if (url === '#' || url === '' || url.toLowerCase() === 'null' || url.toLowerCase() === 'undefined') return '';
+  if (!/^https?:\/\//i.test(url)) {
+    return 'https://' + url;
+  }
+  return url;
+}
+
 // ══════════════════════════════════════════════════════
 // RENDER NEWSLETTER
 // ══════════════════════════════════════════════════════
@@ -209,14 +219,17 @@ function renderNewsletter(d) {
   // Cifras
   let cifrasHtml = '';
   if (d.cifras && d.cifras.length) {
-    const cards = d.cifras.map(c => `
+    const cards = d.cifras.map(c => {
+      const u = formatUrl(c.url);
+      return `
   <div class="cifra-card">
     <div class="cifra-dato">${esc(c.dato)}</div>
     <div class="cifra-ctx">${esc(c.contexto || '')}</div>
-    ${c.url
-        ? `<div class="cifra-src"><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.fuente || c.url)}</a></div>`
-        : c.fuente ? `<div class="cifra-src">${esc(c.fuente)}</div>` : ''}
-  </div>`).join('');
+    ${u
+        ? `<div class="cifra-src"><a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--c-blue-dark);font-weight:600;text-decoration:underline;">${esc(c.fuente || 'Ver fuente')} ↗</a>${c.fecha_publicacion ? ` · <span style="font-weight:500;opacity:0.85;">${esc(c.fecha_publicacion)}</span>` : ''}</div>`
+        : c.fuente ? `<div class="cifra-src">${esc(c.fuente)}${c.fecha_publicacion ? ` · <span style="font-weight:500;opacity:0.85;">${esc(c.fecha_publicacion)}</span>` : ''}</div>` : ''}
+  </div>`;
+    }).join('');
     cifrasHtml = `
   <div class="nl-cifras">
     <p class="nl-cifras-title">Cifras importantes del sector</p>
@@ -225,16 +238,24 @@ function renderNewsletter(d) {
   }
 
   // Ítems
-  const itemsHtml = (d.items || []).map(it => `
+  const itemsHtml = (d.items || []).map(it => {
+    const u = formatUrl(it.url);
+    const titleHtml = u
+      ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--c-blue-dark);text-decoration:none;">${esc(it.titular || '')}</a>`
+      : esc(it.titular || '');
+    const srcHtml = u
+      ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--c-blue-light);font-weight:600;text-decoration:underline;">${esc(it.fuente || 'Ver enlace')} ↗</a>`
+      : esc(it.fuente || '—');
+
+    return `
 <div class="nl-item">
   ${it.eje ? `<div class="nl-eje">${esc(it.eje)}</div>` : ''}
-  <h3>${esc(it.titular || '')}</h3>
+  <h3>${titleHtml}</h3>
   <p>${esc(it.resumen || '')}</p>
   ${it.por_que_importa ? `<div class="nl-why"><b>Por qué importa:</b> ${esc(it.por_que_importa)}</div>` : ''}
-  <p class="nl-src">Fuente: ${it.url
-      ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.fuente || it.url)}</a>`
-      : esc(it.fuente || '—')}</p>
-</div>`).join('');
+  <p class="nl-src">Fuente: ${srcHtml}${it.fecha_publicacion ? ` · <span style="color:var(--text-muted);font-weight:500;">📅 ${esc(it.fecha_publicacion)}</span>` : ''}</p>
+</div>`;
+  }).join('');
 
   // Oportunidades
   const oppsHtml = (d.oportunidades && d.oportunidades.length) ? `
@@ -242,8 +263,9 @@ function renderNewsletter(d) {
   <h4>Oportunidades accionables</h4>
   <ul>${d.oportunidades.map(o => {
     if (typeof o === 'string') return `<li>${esc(o)}</li>`;
-    const src = o.url
-      ? `<a href="${esc(o.url)}" target="_blank" rel="noopener">${esc(o.fuente || o.url)}</a>`
+    const u = formatUrl(o.url);
+    const src = u
+      ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--c-blue-light);font-weight:600;text-decoration:underline;">${esc(o.fuente || 'Ver convocatoria')} ↗</a>`
       : o.fuente ? esc(o.fuente) : '';
     return `<li>${esc(o.texto || o.text || '')}${src ? ` <span class="nl-opp-src">— ${src}</span>` : ''}</li>`;
   }).join('')}</ul>
@@ -252,7 +274,7 @@ function renderNewsletter(d) {
   out.innerHTML = `
 <div class="toolbar">
   <span></span>
-  <button class="btn-ghost" onclick="downloadPDF('output')">Descargar PDF</button>
+  <button class="btn-ghost" onclick="downloadPDF('output', this)">Descargar PDF</button>
 </div>
 <div class="nl-head">
   <div class="nl-kicker">Universidad de La Sabana</div>
@@ -1238,7 +1260,7 @@ async function loadHistorialReport(id) {
     toolbar.innerHTML = `
       <span style="font-size:.8rem;color:var(--text-muted);">${_fmtDate(report.created_at)} · ${esc(report.origen)}</span>
       <div style="display:flex;gap:.5rem;">
-        <button class="btn-ghost" onclick="downloadPDF('histOutput')" style="font-size:.82rem;">Descargar PDF</button>
+        <button class="btn-ghost" onclick="downloadPDF('histOutput', this)" style="font-size:.82rem;">Descargar PDF</button>
         <button class="btn-ghost" onclick="deleteReport('${id}')" style="font-size:.82rem;border-color:var(--c-red);color:var(--c-red);">Eliminar</button>
       </div>`;
     out.appendChild(toolbar);
@@ -1254,32 +1276,45 @@ async function loadHistorialReport(id) {
     const d = report.newsletter;
     let cifrasHtml = '';
     if (d.cifras && d.cifras.length) {
-      const cards = d.cifras.map(c => `
+      const cards = d.cifras.map(c => {
+        const u = formatUrl(c.url);
+        return `
         <div class="cifra-card">
           <div class="cifra-dato">${esc(c.dato)}</div>
           <div class="cifra-ctx">${esc(c.contexto || '')}</div>
-          ${c.url ? `<div class="cifra-src"><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.fuente || c.url)}</a></div>`
-          : c.fuente ? `<div class="cifra-src">${esc(c.fuente)}</div>` : ''}
-        </div>`).join('');
+          ${u
+            ? `<div class="cifra-src"><a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--c-blue-dark);font-weight:600;text-decoration:underline;">${esc(c.fuente || 'Ver fuente')} ↗</a>${c.fecha_publicacion ? ` · <span style="font-weight:500;opacity:0.85;">${esc(c.fecha_publicacion)}</span>` : ''}</div>`
+            : c.fuente ? `<div class="cifra-src">${esc(c.fuente)}${c.fecha_publicacion ? ` · <span style="font-weight:500;opacity:0.85;">${esc(c.fecha_publicacion)}</span>` : ''}</div>` : ''}
+        </div>`;
+      }).join('');
       cifrasHtml = `<div class="nl-cifras"><p class="nl-cifras-title">Cifras importantes del sector</p><div class="cifras-grid">${cards}</div></div>`;
     }
-    const itemsHtml = (d.items || []).map(it => `
+    const itemsHtml = (d.items || []).map(it => {
+      const u = formatUrl(it.url);
+      const titleHtml = u
+        ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--c-blue-dark);text-decoration:none;">${esc(it.titular || '')}</a>`
+        : esc(it.titular || '');
+      const srcHtml = u
+        ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--c-blue-light);font-weight:600;text-decoration:underline;">${esc(it.fuente || 'Ver enlace')} ↗</a>`
+        : esc(it.fuente || '—');
+
+      return `
       <div class="nl-item">
         ${it.eje ? `<div class="nl-eje">${esc(it.eje)}</div>` : ''}
-        <h3>${esc(it.titular || '')}</h3>
+        <h3>${titleHtml}</h3>
         <p>${esc(it.resumen || '')}</p>
         ${it.por_que_importa ? `<div class="nl-why"><b>Por qué importa:</b> ${esc(it.por_que_importa)}</div>` : ''}
-        <p class="nl-src">Fuente: ${it.url
-        ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.fuente || it.url)}</a>`
-        : esc(it.fuente || '—')}</p>
-      </div>`).join('');
+        <p class="nl-src">Fuente: ${srcHtml}${it.fecha_publicacion ? ` · <span style="color:var(--text-muted);font-weight:500;">📅 ${esc(it.fecha_publicacion)}</span>` : ''}</p>
+      </div>`;
+    }).join('');
     const oppsHtml = (d.oportunidades && d.oportunidades.length) ? `
       <div class="nl-opps">
         <h4>Oportunidades accionables</h4>
         <ul>${d.oportunidades.map(o => {
       if (typeof o === 'string') return `<li>${esc(o)}</li>`;
-      const src = o.url
-        ? `<a href="${esc(o.url)}" target="_blank" rel="noopener">${esc(o.fuente || o.url)}</a>`
+      const u = formatUrl(o.url);
+      const src = u
+        ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--c-blue-light);font-weight:600;text-decoration:underline;">${esc(o.fuente || 'Ver convocatoria')} ↗</a>`
         : o.fuente ? esc(o.fuente) : '';
       return `<li>${esc(o.texto || o.text || '')}${src ? ` <span class="nl-opp-src">— ${src}</span>` : ''}</li>`;
     }).join('')}</ul>
@@ -1318,29 +1353,26 @@ async function deleteReport(id) {
   }
 }
 
-/** Descarga el contenido del elemento como PDF usando html2pdf.js */
-function downloadPDF(containerId) {
+/** Exporta el newsletter a PDF usando el motor de impresión nativo del navegador */
+function downloadPDF(containerId, btnEl) {
   const el = document.getElementById(containerId);
-  if (!el) return;
-  if (!window.html2pdf) {
-    alert('La librería de PDF no está disponible. Verifica tu conexión a internet.');
+  if (!el) {
+    alert('No hay ningún newsletter seleccionado para exportar.');
     return;
   }
-  // Determinar título para el nombre del archivo
+
   const titleEl = el.querySelector('.nl-title');
-  const title = titleEl ? titleEl.textContent.trim().substring(0, 50) : 'newsletter';
-  const filename = `${title.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().slice(0, 10)}.pdf`;
+  const title = titleEl ? titleEl.textContent.trim() : 'Newsletter Ejecutivo GovLab';
+  const cleanTitle = title.replace(/[^a-z0-9áéíóúÁÉÍÓÚñÑ\s]/gi, '').trim() || 'Newsletter_Ejecutivo';
+  const originalTitle = document.title;
 
-  const opt = {
-    margin: [10, 12, 10, 12],
-    filename,
-    image: { type: 'jpeg', quality: 0.95 },
-    html2canvas: { scale: 2, useCORS: true, scrollY: 0 },
-    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
-  };
+  document.title = `${cleanTitle} - ${new Date().toISOString().slice(0, 10)}`;
 
-  html2pdf().set(opt).from(el).save();
+  window.print();
+
+  setTimeout(() => {
+    document.title = originalTitle;
+  }, 1000);
 }
 
 /** Formatea una fecha ISO a string legible en español */
@@ -1560,11 +1592,19 @@ let currentTutorialStep = 0;
 function startTutorial() {
   currentTutorialStep = 0;
   renderTutorialStep();
-  document.getElementById('tutorialOverlay').classList.add('show');
+  const el = document.getElementById('tutorialOverlay');
+  if (el) {
+    el.style.display = 'flex';
+    el.classList.add('show');
+  }
 }
 
 function closeTutorial() {
-  document.getElementById('tutorialOverlay').classList.remove('show');
+  const el = document.getElementById('tutorialOverlay');
+  if (el) {
+    el.classList.remove('show');
+    el.style.display = 'none';
+  }
   localStorage.setItem('govlab_tutorial_seen', 'true');
 }
 

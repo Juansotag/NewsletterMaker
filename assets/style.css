@@ -808,35 +808,72 @@ footer p {
 
 /* ── Print ── */
 @media print {
+  @page {
+    margin: 12mm 15mm;
+    size: A4 portrait;
+  }
+
   body {
-    background: #fff;
+    background: #fff !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
 
   nav,
   footer,
   #configPanel,
   .toolbar,
-  .tab-bar {
+  .tab-bar,
+  .hero,
+  #fileTreeContainer,
+  #panel-ctx,
+  #panel-send,
+  #panel-config,
+  .tab-panel:not(.active),
+  #panel-hist .grid > section:first-child,
+  .tutorial-overlay {
     display: none !important;
   }
 
   main {
-    padding: 0;
-    max-width: 100%;
+    padding: 0 !important;
+    max-width: 100% !important;
+    margin: 0 !important;
   }
 
   .grid {
-    display: block;
+    display: block !important;
   }
 
-  #output.card {
-    border: none;
-    box-shadow: none;
-    padding: 0;
+  #output.card,
+  #histOutput.card {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    background: #fff !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .nl-head {
+    border-bottom: 2.5px solid #00135B !important;
+    padding-bottom: 0.8rem !important;
+    margin-bottom: 1.2rem !important;
+  }
+
+  .nl-kicker {
+    color: #00387D !important;
+    font-weight: 700 !important;
+  }
+
+  .nl-title {
+    color: #00135B !important;
   }
 
   .nl-item {
-    break-inside: avoid;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+    margin-bottom: 1.2rem !important;
   }
 
   .nl-cifras,
@@ -845,6 +882,11 @@ footer p {
   .nl-opps {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+  }
+
+  a {
+    color: #00387D !important;
+    text-decoration: underline !important;
   }
 }
 
@@ -1076,25 +1118,27 @@ footer p {
 
 /* ── Tutorial Premium Overlay ── */
 .tutorial-overlay {
+  display: none !important;
   position: fixed;
   top: 0;
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: transparent;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  z-index: 9999;
-  display: flex;
-  align-items: flex-end;
-  justify-content: flex-end;
+  background: rgba(0, 19, 91, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 99999;
+  align-items: center;
+  justify-content: center;
   padding: 2rem;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.3s ease;
+  transition: opacity 0.2s ease;
 }
 .tutorial-overlay.show {
-  opacity: 1;
+  display: flex !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
 }
 .tutorial-card {
   background: var(--bg-card);
@@ -1244,3 +1288,69 @@ footer p {
   background: var(--c-blue-hover);
   box-shadow: 0 4px 12px rgba(0, 19, 91, 0.2);
 }
+
+/* ── Estilos optimizados para exportación PDF ── */
+.pdf-export-container {
+  background: #ffffff !important;
+  color: #374151 !important;
+}
+
+.pdf-export-container .nl-head {
+  border-bottom: 2.5px solid #00135B !important;
+  padding-bottom: 0.8rem !important;
+  margin-bottom: 1.2rem !important;
+}
+
+.pdf-export-container .nl-kicker {
+  font-size: 0.75rem !important;
+  font-weight: 700 !important;
+  letter-spacing: .12em !important;
+  text-transform: uppercase !important;
+  color: #00387D !important;
+}
+
+.pdf-export-container .nl-title {
+  font-family: 'Publico Banner', 'Playfair Display', serif !important;
+  font-style: italic !important;
+  font-size: 1.85rem !important;
+  color: #00135B !important;
+  margin: 0.25rem 0 !important;
+  line-height: 1.2 !important;
+}
+
+.pdf-export-container .nl-meta {
+  font-size: 0.85rem !important;
+  color: #64748b !important;
+}
+
+.pdf-export-container .nl-cifras {
+  background: #00135B !important;
+  color: #ffffff !important;
+  border-radius: 8px !important;
+  padding: 1rem 1.25rem !important;
+  margin-bottom: 1.25rem !important;
+  page-break-inside: avoid !important;
+  break-inside: avoid !important;
+}
+
+.pdf-export-container .nl-item {
+  page-break-inside: avoid !important;
+  break-inside: avoid !important;
+  margin-bottom: 1rem !important;
+  background: #f8fafc !important;
+  border: 1px solid #D9E1EF !important;
+  border-left: 4px solid #00135B !important;
+  border-radius: 8px !important;
+  padding: 1rem 1.25rem !important;
+}
+
+.pdf-export-container .nl-opps {
+  page-break-inside: avoid !important;
+  break-inside: avoid !important;
+  background: #f0f4fb !important;
+  border: 1px solid #D9E1EF !important;
+  border-radius: 8px !important;
+  padding: 1rem 1.25rem !important;
+  margin-top: 1rem !important;
+}
+

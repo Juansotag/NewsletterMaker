@@ -71,11 +71,14 @@ def render_email_html(newsletter: dict, *, subject: str = "") -> str:
         resumen   = esc(it.get("resumen", ""))
         pqi       = esc(it.get("por_que_importa", ""))
         fuente_i  = esc(it.get("fuente", ""))
+        fecha_pub = esc(it.get("fecha_publicacion", ""))
         url_i     = esc(it.get("url", ""))
         src_i     = (
             f'<a href="{url_i}" style="color:#1a3a6b;">{fuente_i or url_i}</a>'
             if url_i else fuente_i
         )
+        if fecha_pub:
+            src_i += f" &middot; <span>{fecha_pub}</span>"
         eje_tag   = (
             f'<div style="font-size:11px;font-weight:700;color:#c59a33;text-transform:uppercase;'
             f'letter-spacing:.08em;margin-bottom:4px;">{eje}</div>'

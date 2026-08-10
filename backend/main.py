@@ -38,7 +38,12 @@ async_client = anthropic.AsyncAnthropic(api_key=_api_key, http_client=httpx.Asyn
 
 # ─── Cliente Supabase ─────────────────────────────────────────────────────────
 _supabase_url = os.environ.get("SUPABASE_URL", "")
-_supabase_key = os.environ.get("SUPABASE_SECRET_KEY", "") or os.environ.get("SUPABASE_SERVICE_KEY", "")
+_supabase_key = (
+    os.environ.get("SUPABASE_SECRET_KEY", "")
+    or os.environ.get("SUPABASE_SERVICE_KEY", "")
+    or os.environ.get("SUPABASE_KEY", "")
+    or os.environ.get("SUPABASE_ANON_KEY", "")
+)
 supabase_client = None
 if _supabase_url and _supabase_key:
     import httpx
@@ -230,39 +235,148 @@ class AssistResponse(BaseModel):
     modified_content: str
 
 
-def build_user_message(cfg: Config) -> str:
-    hoy  = datetime.date.today().isoformat()
+MESES_ES = {
+    1: "enero", 2: "febrero", 3: "marzo", 4: "abril",
+    5: "mayo", 6: "junio", 7: "julio", 8: "agosto",
+    9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"
+}
+
+def format_date_es(d: datetime.date) -> str:
+    return f"{d.day} de {MESES_ES[d.month]} de {d.year}"
+
+
+def build_user_message(cfg: Config | dict) -> str:
+    if isinstance(cfg, dict):
+        cfg = Config(**cfg)
+
+    hoy = datetime.date.today()
+    fecha_desde = hoy - datetime.timedelta(days=cfg.periodo_dias)
+    hoy_str = hoy.isoformat()
+    desde_str = fecha_desde.isoformat()
+    hoy_humano = format_date_es(hoy)
+    desde_humano = format_date_es(fecha_desde)
+    mes_actual = MESES_ES[hoy.month]
+    anio_actual = hoy.year
+
     ejes = ", ".join(cfg.ejes) if cfg.ejes else "todos los ejes prioritarios"
-    num  = max(1, min(20, cfg.num_items))
-    search_instr = "Busca en internet, filtra y devuelve solo el JSON válido." if cfg.buscar_web else "Devuelve solo el JSON válido basándote únicamente en las notas proporcionadas por el usuario."
+    num = max(1, min(20, cfg.num_items))
+
+    if cfg.buscar_web:
+        instrucciones_busqueda = (
+            f"INSTRUCCIONES OBLIGATORIAS DE BÚSQUEDA Y FILTRADO TEMPORAL:\n"
+            f"1. RANGO DE FECHAS ESTRICTO: Solo se admiten noticias e información publicadas entre el {desde_str} y el {hoy_str} ({desde_humano} a {hoy_humano}).\n"
+            f"2. ESTRATEGIA DE BÚSQUEDA: Al hacer consultas con la herramienta web_search, incluye SIEMPRE términos temporales explícitos (ej. '{mes_actual} {anio_actual}', '{anio_actual}') para asegurar que los motores de búsqueda devuelvan noticias recientes y no artículos antiguos.\n"
+            f"3. PROHIBICIÓN ESTRICTA DE NOTICIAS ANTIGUAS: Queda TERMINANTEMENTE PROHIBIDO incluir artículos de meses anteriores (ej. mayo, junio, julio o anteriores) o de fechas fuera del período de los últimos {cfg.periodo_dias} días. Si un artículo encontrado no es reciente o no tiene fecha verificable dentro de la ventana {desde_str} a {hoy_str}, DESCÁRTALO de inmediato y realiza otra búsqueda más precisa.\n"
+            f"4. CAMPO 'fecha_publicacion': En cada elemento de 'items' y 'cifras', incluye el campo 'fecha_publicacion' con la fecha exacta (YYYY-MM-DD o DD de Mes) confirmada de la publicación.\n"
+            f"Devuelve exclusivamente el JSON estructurado con información real y verificada."
+        )
+    else:
+        instrucciones_busqueda = "Devuelve solo el JSON válido basándote únicamente en las notas proporcionadas por el usuario."
+
     return (
-        f"Hoy es {hoy}. Genera un newsletter tipo '{cfg.tipo}' para: {cfg.audiencia}.\n"
-        f"Ejes a cubrir: {ejes}.\n"
-        f"Período: últimos {cfg.periodo_dias} días.\n"
-        f"Número de ítems: {num}.\n"
-        f"Notas del usuario: {cfg.notas or 'ninguna'}.\n"
-        f"{search_instr}"
+        f"FECHA ACTUAL: {hoy_str} ({hoy_humano}).\n"
+        f"VENTANA TEMPORAL ESTRICTA: Del {desde_str} al {hoy_str} ({desde_humano} al {hoy_humano} — últimos {cfg.periodo_dias} días).\n"
+        f"DESTINATARIO: {cfg.audiencia}.\n"
+        f"TIPO DE NEWSLETTER: {cfg.tipo}.\n"
+        f"EJES TEMÁTICOS: {ejes}.\n"
+        f"NÚMERO DE ÍTEMS REQUERIDOS: {num}.\n"
+        f"NOTAS ADICIONALES: {cfg.notas or 'ninguna'}.\n\n"
+        f"{instrucciones_busqueda}"
     )
 
 
+
+def clean_json_string(s: str) -> str:
+    # Eliminar comas finales antes de } o ]
+    return _re.sub(r',\s*([}\]])', r'\1', s)
+
+
 def extract_json(text: str) -> dict:
-    text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    if not text:
+        raise ValueError("Respuesta vacía recibida del modelo")
+
+    text_stripped = text.strip()
+
+    # 1. Intento directo si es JSON puro
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
+        return json.loads(text_stripped)
+    except Exception:
         pass
-    start = text.find("{")
-    if start == -1:
-        raise json.JSONDecodeError("No JSON found", text, 0)
+
+    # 2. Buscar bloques ```json ... ``` o ``` ... ```
+    code_blocks = _re.findall(r'```(?:json)?\s*([\s\S]*?)\s*```', text_stripped, _re.IGNORECASE)
+    for block in reversed(code_blocks):
+        b = block.strip()
+        try:
+            return json.loads(b)
+        except Exception:
+            try:
+                return json.loads(clean_json_string(b))
+            except Exception:
+                pass
+
+    # 3. Parser consciente de strings para localizar objetos { ... } balanceados
+    candidates = []
+    in_string = False
+    escape = False
     depth = 0
-    for i, ch in enumerate(text[start:], start=start):
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return json.loads(text[start : i + 1])
-    raise json.JSONDecodeError("Unbalanced JSON", text, start)
+    start = -1
+
+    for i, ch in enumerate(text_stripped):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == '\\':
+                escape = True
+            elif ch == '"':
+                in_string = False
+        else:
+            if ch == '"':
+                in_string = True
+            elif ch == '{':
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == '}':
+                if depth > 0:
+                    depth -= 1
+                    if depth == 0 and start != -1:
+                        candidates.append(text_stripped[start : i + 1])
+                        start = -1
+
+    # Evaluar candidatos de atrás hacia adelante (el JSON final suele estar al final)
+    for cand in reversed(candidates):
+        try:
+            return json.loads(cand)
+        except Exception:
+            try:
+                return json.loads(clean_json_string(cand))
+            except Exception:
+                pass
+
+    # 4. En caso de truncamiento (max_tokens excedido), intentar auto-cerrar
+    if start != -1 and depth > 0:
+        partial = text_stripped[start:]
+        if in_string:
+            partial += '"'
+        partial += '}' * depth
+        try:
+            return json.loads(clean_json_string(partial))
+        except Exception:
+            pass
+
+    # 5. Si todo falla, intentar buscar desde el primer '{' hasta el último '}'
+    first_brace = text_stripped.find('{')
+    last_brace = text_stripped.rfind('}')
+    if first_brace != -1 and last_brace > first_brace:
+        span = text_stripped[first_brace : last_brace + 1]
+        try:
+            return json.loads(clean_json_string(span))
+        except Exception:
+            pass
+
+    raise json.JSONDecodeError(f"No se pudo extraer JSON válido del texto: {text_stripped[:200]}...", text_stripped, 0)
+
 
 
 # ─── Streaming endpoint ────────────────────────────────────────────────────────
@@ -298,7 +412,7 @@ async def generate_stream(cfg: Config, x_api_key: str = Header(default="")):
             model = cfg.model if cfg.model in VALID_MODELS else "claude-sonnet-4-6"
             async with client.messages.stream(
                 model=model,
-                max_tokens=4096,
+                max_tokens=8192,
                 system=system_prompt,
                 tools=tools,
                 messages=[{"role": "user", "content": build_user_message(cfg)}],
@@ -353,7 +467,7 @@ async def generate_stream(cfg: Config, x_api_key: str = Header(default="")):
                     except Exception as save_err:
                         print(f"Error guardando reporte en Supabase: {save_err}")
                 yield f"data: {json.dumps({'type':'done','newsletter':data,'report_id':report_id})}\n\n"
-            except json.JSONDecodeError as e:
+            except (json.JSONDecodeError, ValueError) as e:
                 yield f"data: {json.dumps({'type':'error','message':f'JSON inválido: {e}'})}\n\n"
 
         except Exception as e:
@@ -751,7 +865,10 @@ async def assist_doc(body: AssistRequest, x_api_key: str = Header(default="")):
 # ─── Frontend estático ─────────────────────────────────────────────────────────
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(ROOT, "index.html"))
+    return FileResponse(
+        os.path.join(ROOT, "index.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
+    )
 
 
 app.mount("/assets", StaticFiles(directory=os.path.join(ROOT, "assets")), name="assets")
