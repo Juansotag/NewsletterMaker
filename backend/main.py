@@ -34,9 +34,13 @@ app = FastAPI(title="Newsletter Ejecutivo GovLab")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ─── Clientes Anthropic ────────────────────────────────────────────────────────
-import httpx
-_api_key     = os.environ.get("ANTHROPIC_API_KEY", "")
-async_client = anthropic.AsyncAnthropic(api_key=_api_key, http_client=httpx.AsyncClient(verify=False))
+_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+
+def get_anthropic_client(api_key: str = "") -> anthropic.AsyncAnthropic:
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    return anthropic.AsyncAnthropic(api_key=key)
+
+async_client = get_anthropic_client(_api_key) if _api_key else None
 
 # ─── Cliente Supabase ─────────────────────────────────────────────────────────
 _supabase_url = os.environ.get("SUPABASE_URL", "")
@@ -393,7 +397,7 @@ async def generate_stream(cfg: Config, x_api_key: str = Header(default="")):
         return StreamingResponse(_err(), media_type="text/event-stream")
 
     # Refrescar el cliente con la clave actual (por si cambió en runtime)
-    client = anthropic.AsyncAnthropic(api_key=api_key, http_client=httpx.AsyncClient(verify=False))
+    client = get_anthropic_client(api_key)
 
     # Cargar contexto y prompt del sistema dinámicamente desde Supabase
     if cfg.usar_contexto:
@@ -842,7 +846,7 @@ async def assist_doc(body: AssistRequest, x_api_key: str = Header(default="")):
     if not api_key:
         raise HTTPException(status_code=400, detail="Falta la clave API de Anthropic (ANTHROPIC_API_KEY)")
         
-    client = anthropic.AsyncAnthropic(api_key=api_key, http_client=httpx.AsyncClient(verify=False))
+    client = get_anthropic_client(api_key)
     
     system_prompt = (
         "Eres un asistente experto de inteligencia artificial del GovLab.\n"

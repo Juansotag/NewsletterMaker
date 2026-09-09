@@ -52,10 +52,7 @@ async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str
     if not key:
         raise ValueError("ANTHROPIC_API_KEY no configurada")
 
-    client = anthropic.AsyncAnthropic(
-        api_key=key,
-        http_client=httpx.AsyncClient(verify=False),
-    )
+    client = anthropic.AsyncAnthropic(api_key=key)
 
     # System prompt
     try:
