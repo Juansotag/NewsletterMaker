@@ -287,10 +287,7 @@ class Config(BaseModel):
     model: str = "claude-sonnet-4-6"
     buscar_web: bool = True
     usar_contexto: bool = True
-
     model_config = {"extra": "ignore"}
-    class Config:
-        extra = "ignore"
 
 
 class DocCreate(BaseModel):
