@@ -104,7 +104,7 @@ def check_whatsapp_status() -> dict:
                             "connected": is_open,
                             "provider": "Evolution API",
                             "url": url,
-                            "message": "Evolution API conectada a WhatsApp ✓" if is_open else f"Evolution API online, pero sesión en estado '{state}' (requiere escanear QR)"
+                            "message": "Evolution API conectada a WhatsApp (sesion activa)" if is_open else f"Evolution API online, pero sesión en estado '{state}' (requiere escanear QR)"
                         }
                     elif r.status_code == 404:
                         return {
@@ -130,7 +130,7 @@ def check_whatsapp_status() -> dict:
                         "connected": is_conn,
                         "provider": "Open-Wa",
                         "url": url,
-                        "message": "Open-Wa conectado y activo ✓" if is_conn else "Open-Wa en línea, requiere escanear código QR"
+                        "message": "Open-Wa conectado y activo" if is_conn else "Open-Wa en línea, requiere escanear código QR"
                     }
             except (httpx.ConnectError, ConnectionRefusedError):
                 raise

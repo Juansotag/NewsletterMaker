@@ -363,11 +363,11 @@ def generate_newsletter_pdf(newsletter: dict) -> bytes:
 
             # Enlace de fuente
             fecha_pub = _safe_xml(it.get("fecha_publicacion") or "")
-            fuente_txt = f"🔗 Fuente: {fuente_i}" + (f" ({fecha_pub})" if fecha_pub else "")
+            fuente_txt = f"Fuente: {fuente_i}" + (f" ({fecha_pub})" if fecha_pub else "")
             if fuente_i and url_i:
                 item_elements.append(Paragraph(f'<a href="{url_i}"><u>{fuente_txt} ({url_i}) ↗</u></a>', style_fuente))
             elif url_i:
-                item_elements.append(Paragraph(f'<a href="{url_i}"><u>🔗 Enlace{f" ({fecha_pub})" if fecha_pub else ""}: {url_i} ↗</u></a>', style_fuente))
+                item_elements.append(Paragraph(f'<a href="{url_i}"><u>Enlace{f" ({fecha_pub})" if fecha_pub else ""}: {url_i} ↗</u></a>', style_fuente))
             elif fuente_i:
                 item_elements.append(Paragraph(f"<i>{fuente_txt}</i>", style_fuente))
 
@@ -404,9 +404,9 @@ def generate_newsletter_pdf(newsletter: dict) -> bytes:
 
                 link_html = ""
                 if fuente_o and url_o:
-                    link_html = f' &nbsp;—&nbsp; <a href="{url_o}"><u><b>🔗 {fuente_o} ↗</b></u></a>'
+                    link_html = f' &nbsp;—&nbsp; <a href="{url_o}"><u><b>{fuente_o} ↗</b></u></a>'
                 elif url_o:
-                    link_html = f' &nbsp;—&nbsp; <a href="{url_o}"><u><b>🔗 Ver convocatoria ↗</b></u></a>'
+                    link_html = f' &nbsp;—&nbsp; <a href="{url_o}"><u><b>Ver convocatoria ↗</b></u></a>'
                 elif fuente_o:
                     link_html = f' &nbsp;—&nbsp; <i>{fuente_o}</i>'
 

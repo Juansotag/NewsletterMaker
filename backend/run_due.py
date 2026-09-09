@@ -224,7 +224,7 @@ async def run_due_schedules():
                             target,
                             pdf_bytes,
                             filename=pdf_filename,
-                            caption=f"📄 {titulo} — Universidad de La Sabana"
+                            caption=f"{titulo} — Universidad de La Sabana"
                         )
                         if pdf_res.get("success"):
                             print(f"[run_due] PDF adjunto enviado a {target}")

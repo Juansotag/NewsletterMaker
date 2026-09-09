@@ -42,21 +42,19 @@
   <!-- ══ TABS ══ -->
   <div class="tab-bar">
     <div class="tab-bar-inner">
-      <button class="tab-btn active" id="tab-nl-btn" onclick="switchTab('nl')">Newsletter</button>
+      <button class="tab-btn active" id="tab-nl-btn" onclick="switchTab('nl')">Newsletter y Envío</button>
       <button class="tab-btn" id="tab-ctx-btn" onclick="switchTab('ctx')">Editor de Contexto</button>
       <button class="tab-btn" id="tab-hist-btn" onclick="switchTab('hist')">Historial</button>
-      <button class="tab-btn" id="tab-send-btn" onclick="switchTab('send')">Envío</button>
       <button class="tab-btn" id="tab-config-btn" onclick="switchTab('config')">Configuración</button>
     </div>
   </div>
 
-  <!-- ══════════════ PANEL NEWSLETTER ══════════════ -->
+  <!-- ══════════════ PANEL NEWSLETTER Y ENVÍO UNIFICADO ══════════════ -->
   <div id="panel-nl" class="tab-panel active">
     <main>
       <div class="hero">
-        <h1>Newsletter Ejecutivo</h1>
-        <p>Configura la edición, deja que el agente busque en las fuentes del ecosistema y descarga un PDF listo para
-          leer.</p>
+        <h1>Newsletter Ejecutivo y Envío</h1>
+        <p>Configura tu edición, genera el análisis con IA, previsualízalo y envíalo de inmediato o programa su entrega recurrente por WhatsApp.</p>
       </div>
 
       <div class="grid">
@@ -111,9 +109,57 @@
           <textarea id="notas"
             placeholder="Ej: prioriza convocatorias con fecha de cierre próxima; incluye lo que hizo ASU esta semana."></textarea>
 
-          <button class="btn" id="generar" onclick="generar()">
-            <span id="btnLabel">Generar newsletter</span>
-          </button>
+          <label for="sendWhatsAppTo" class="label-section">WhatsApp destino (Número o Grupo)</label>
+          <input type="text" id="sendWhatsAppTo" placeholder="+57 300 123 4567 o 120363...@g.us">
+          <span style="font-size:.72rem;color:var(--text-muted);display:block;margin-top:.25rem;">
+            Código de país obligatorio (+57 para Colombia). Para grupos usa el ID (@g.us).
+          </span>
+
+          <div style="display:flex;gap:.5rem;margin-top:1.25rem;">
+            <button class="btn" id="generar" onclick="generar()" style="flex:1;">
+              <span id="btnLabel">Generar newsletter</span>
+            </button>
+            <button class="btn-ghost" id="btnSendWhatsAppNow" onclick="sendCurrentEditionWhatsApp()" style="flex:1;font-weight:600;" title="Enviar a WhatsApp el newsletter generado">
+              <span id="btnSendLabel">Enviar a WhatsApp</span>
+            </button>
+          </div>
+          <div id="sendImmediateStatus" style="font-size:.8rem;margin-top:.4rem;"></div>
+
+          <!-- Programación Recurrente -->
+          <details id="scheduleAccordion" style="margin-top:1.25rem;border:1px solid var(--border-color);border-radius:8px;padding:.75rem .9rem;background:#fcfdfe;">
+            <summary style="font-weight:700;font-size:.84rem;color:var(--c-blue-dark);cursor:pointer;">
+              Programar Envío Recurrente Automático
+            </summary>
+            <div style="display:flex;flex-direction:column;gap:.75rem;margin-top:.85rem;">
+              <p style="font-size:.78rem;color:var(--text-muted);margin:0;line-height:1.4;">
+                Guarda esta configuración exacta (tipo, ejes temáticos seleccionados, período y notas) para envíos programados automáticos.
+              </p>
+              <div>
+                <label class="label-section" style="margin-top:0;">Nombre de la programación</label>
+                <input id="sendName" type="text" placeholder="Ej: Radar Ejecutivo Lunes" style="width:100%;">
+              </div>
+              <div>
+                <label class="label-section" style="margin-top:0;">Frecuencia</label>
+                <select id="sendFreqPreset" onchange="_syncCronInput()" style="width:100%;font-size:.85rem;padding:.45rem .65rem;">
+                  <option value="0 7 * * 1">Lunes 7:00 am (semanal)</option>
+                  <option value="0 7 * * 5">Viernes 7:00 am (semanal)</option>
+                  <option value="0 6 * * 5">Viernes 6:00 am (semanal)</option>
+                  <option value="0 7 1 * *">Primer día del mes</option>
+                  <option value="0 7 * * 1,3,5">L-M-V 7:00 am</option>
+                  <option value="custom">Personalizado (cron)</option>
+                </select>
+              </div>
+              <div id="sendCronCustomRow" style="display:none;">
+                <label class="label-section" style="margin-top:0;">Expresión cron</label>
+                <input id="sendCron" type="text" placeholder="0 7 * * 1" style="width:100%;font-family:var(--font-mono);">
+                <span style="font-size:.72rem;color:var(--text-muted);">Formato: minuto hora día-mes mes día-semana</span>
+              </div>
+              <button class="btn" id="btnCreateSchedule" onclick="createScheduleFromUnifiedForm()" style="margin-top:0.25rem;">
+                Guardar Programación
+              </button>
+              <div id="sendCreateStatus" style="font-size:.8rem;"></div>
+            </div>
+          </details>
         </section>
 
         <!-- OUTPUT -->
@@ -127,6 +173,22 @@
           </div>
         </section>
       </div>
+
+      <!-- PROGRAMACIONES ACTIVAS UNIFICADAS -->
+      <section class="card" style="margin-top: 1.5rem; padding: 1.25rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem;">
+          <div>
+            <h2 style="margin:0;font-size:1.1rem;color:var(--c-blue-dark);">Programaciones Activas de Envío</h2>
+            <p style="margin:0.2rem 0 0;font-size:0.8rem;color:var(--text-muted);">
+              Envíos automáticos por WhatsApp configurados para la Dirección General.
+            </p>
+          </div>
+          <button class="btn-ghost" onclick="loadSchedules()" style="font-size:.78rem;padding:.35rem .75rem;" title="Recargar programaciones">Recargar</button>
+        </div>
+        <div id="scheduleList">
+          <p style="color:var(--text-muted);font-size:.85rem;">Cargando programaciones…</p>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -346,7 +408,7 @@
         <section class="card" style="padding: 1.25rem; align-self: start; max-height: 80vh; overflow-y: auto;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
             <h2 style="margin: 0;">Reportes</h2>
-            <button class="btn-ghost" onclick="loadHistorial()" style="font-size: 0.75rem; padding: 0.3rem 0.65rem;" title="Recargar">↻</button>
+            <button class="btn-ghost" onclick="loadHistorial()" style="font-size: 0.75rem; padding: 0.3rem 0.65rem;" title="Recargar">Recargar</button>
           </div>
           <div id="histList">
             <p style="color: var(--text-muted); font-size: .85rem; padding: 0.5rem 0;">Cargando…</p>
@@ -360,100 +422,6 @@
               <path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/>
             </svg>
             <div>Selecciona un reporte de la lista para verlo.</div>
-          </div>
-        </section>
-      </div>
-    </main>
-  </div>
-
-  <!-- ══════════════ PANEL ENVÍO ══════════════ -->
-  <div id="panel-send" class="tab-panel">
-    <main>
-      <div class="hero">
-        <h1>Envío programado por WhatsApp</h1>
-        <p>Programa un newsletter recurrente. Se generará automáticamente con IA y se enviará directamente por WhatsApp al contacto o grupo configurado.</p>
-      </div>
-
-      <div class="grid" style="grid-template-columns: 380px 1fr; align-items: start;">
-
-        <!-- Formulario nueva programación -->
-        <section class="card" style="padding: 1.5rem; align-self: start;">
-          <h2 style="margin-top:0;">Nueva programación</h2>
-
-          <div style="display:flex;flex-direction:column;gap:.85rem;">
-            <div>
-              <label class="label-section" style="margin-top:0;">Nombre</label>
-              <input id="sendName" type="text" placeholder="Ej: Radar Ejecutivo Lunes" style="width:100%;">
-            </div>
-            <div>
-              <label class="label-section" style="margin-top:0;">WhatsApp destino (Número o Grupo)</label>
-              <input id="sendEmail" type="text" placeholder="+57 300 123 4567 o 120363...@g.us" style="width:100%;">
-              <span style="font-size:.72rem;color:var(--text-muted);display:block;margin-top:.25rem;">
-                Ingresa con código de país (+57 para Colombia). Para grupos usa el ID del grupo (@g.us).
-              </span>
-            </div>
-            <div>
-              <label class="label-section" style="margin-top:0;">Frecuencia</label>
-              <select id="sendFreqPreset" onchange="_syncCronInput()" style="width:100%;font-size:.85rem;padding:.45rem .65rem;">
-                <option value="0 7 * * 1">Lunes 7:00 am (semanal)</option>
-                <option value="0 7 * * 5">Viernes 7:00 am (semanal)</option>
-                <option value="0 6 * * 5">Viernes 6:00 am (semanal)</option>
-                <option value="0 7 1 * *">Primer día del mes</option>
-                <option value="0 7 * * 1,3,5">L-M-V 7:00 am</option>
-                <option value="custom">Personalizado (cron)</option>
-              </select>
-            </div>
-            <div id="sendCronCustomRow" style="display:none;">
-              <label class="label-section" style="margin-top:0;">Expresión cron</label>
-              <input id="sendCron" type="text" placeholder="0 7 * * 1" style="width:100%;font-family:var(--font-mono);">
-              <span style="font-size:.72rem;color:var(--text-muted);">Formato: minuto hora día-mes mes día-semana</span>
-            </div>
-
-            <!-- Config del newsletter a generar -->
-            <details style="border:1px solid var(--border-color);border-radius:8px;padding:.65rem .85rem;">
-              <summary style="font-weight:600;font-size:.83rem;cursor:pointer;">Configuración del newsletter</summary>
-              <div style="display:flex;flex-direction:column;gap:.65rem;margin-top:.85rem;">
-                <div>
-                  <label class="label-section" style="margin-top:0;">Audiencia</label>
-                  <input id="sendAudiencia" type="text" value="Juan Carlos Camelo" style="width:100%;">
-                </div>
-                <div>
-                  <label class="label-section" style="margin-top:0;">Período (días)</label>
-                  <input id="sendPeriodo" type="number" value="7" min="1" max="30" style="width:100%;">
-                </div>
-                <div>
-                  <label class="label-section" style="margin-top:0;">Ítems</label>
-                  <input id="sendNumItems" type="number" value="4" min="1" max="10" style="width:100%;">
-                </div>
-                <div>
-                  <label class="label-section" style="margin-top:0;">Modelo</label>
-                  <select id="sendModel" style="width:100%;font-size:.85rem;padding:.45rem .65rem;">
-                    <option value="claude-sonnet-4-6">Modelo Ejecutivo (Recomendado)</option>
-                    <option value="claude-haiku-4-5-20251001">Modelo Rápido</option>
-                  </select>
-                </div>
-                <div style="display:flex;align-items:center;gap:.5rem;">
-                  <input type="checkbox" id="sendBuscarWeb" checked style="width:auto;">
-                  <label for="sendBuscarWeb" style="font-size:.83rem;">Buscar en internet</label>
-                </div>
-              </div>
-            </details>
-
-            <button class="btn" id="btnCreateSchedule" onclick="createSchedule()" style="margin-top:.25rem;">
-              Programar envío por WhatsApp
-            </button>
-            <div id="sendCreateStatus" style="font-size:.8rem;"></div>
-          </div>
-        </section>
-
-        <!-- Lista de programaciones -->
-        <section class="card" style="padding:1.25rem;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-            <h2 style="margin:0;">Programaciones activas</h2>
-            <button class="btn-ghost" onclick="loadSchedules()" style="font-size:.75rem;padding:.3rem .65rem;" title="Recargar">↻</button>
-          </div>
-          <div id="scheduleList">
-            <p style="color:var(--text-muted);font-size:.85rem;">Cargando…</p>
           </div>
         </section>
       </div>

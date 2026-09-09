@@ -1,15 +1,24 @@
 // ══════════════════════════════════════════════════════
+// ESTADO GLOBAL
+// ══════════════════════════════════════════════════════
+let _lastGeneratedNewsletter = null;
+let _currentSchedules = [];
+
+// ══════════════════════════════════════════════════════
 // TABS
 // ══════════════════════════════════════════════════════
 function switchTab(tab) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById(`panel-${tab}`).classList.add('active');
-  document.getElementById(`tab-${tab}-btn`).classList.add('active');
+  const targetPanel = document.getElementById(`panel-${tab}`);
+  const targetBtn = document.getElementById(`tab-${tab}-btn`);
+  if (targetPanel) targetPanel.classList.add('active');
+  if (targetBtn) targetBtn.classList.add('active');
+
+  if (tab === 'nl' || tab === 'send') loadSchedules();
   if (tab === 'ctx') loadCtxFiles();
   if (tab === 'config') loadConfigTab();
   if (tab === 'hist') loadHistorial();
-  if (tab === 'send') loadSchedules();
 }
 
 // ══════════════════════════════════════════════════════
@@ -130,6 +139,7 @@ async function generar() {
             break;
           case 'done':
             _currentReportId = evt.report_id || null;
+            _lastGeneratedNewsletter = evt.newsletter;
             renderNewsletter(evt.newsletter);
             btn.disabled = false;
             label.textContent = 'Generar newsletter';
@@ -251,7 +261,7 @@ function renderNewsletter(d) {
   <h3>${titleHtml}</h3>
   <p>${esc(it.resumen || '')}</p>
   ${it.por_que_importa ? `<div class="nl-why"><b>Por qué importa:</b> ${esc(it.por_que_importa)}</div>` : ''}
-  <p class="nl-src">Fuente: ${srcHtml}${it.fecha_publicacion ? ` · <span style="color:var(--text-muted);font-weight:500;">📅 ${esc(it.fecha_publicacion)}</span>` : ''}</p>
+  <p class="nl-src">Fuente: ${srcHtml}${it.fecha_publicacion ? ` · <span style="color:var(--text-muted);font-weight:500;">(${esc(it.fecha_publicacion)})</span>` : ''}</p>
 </div>`;
   }).join('');
 
@@ -270,9 +280,10 @@ function renderNewsletter(d) {
 </div>` : '';
 
   out.innerHTML = `
-<div class="toolbar">
-  <span></span>
-  <button class="btn-ghost" onclick="downloadPDF('output', this)">Descargar PDF</button>
+<div class="toolbar" style="display:flex;gap:.5rem;justify-content:flex-end;margin-bottom:1rem;flex-wrap:wrap;">
+  <button class="btn" onclick="sendCurrentEditionWhatsApp()" style="font-size:.78rem;padding:.4rem .85rem;">Enviar por WhatsApp</button>
+  <button class="btn-ghost" onclick="copyNewsletterWhatsAppText(this)" style="font-size:.78rem;padding:.4rem .8rem;">Copiar Texto</button>
+  <button class="btn-ghost" onclick="downloadPDF('output', this)" style="font-size:.78rem;padding:.4rem .8rem;">Descargar PDF</button>
 </div>
 <div class="nl-head">
   <div class="nl-kicker">Universidad de La Sabana</div>
@@ -1005,7 +1016,8 @@ async function loadSchedules() {
     const r = await fetch('/api/schedules');
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const { schedules } = await r.json();
-    renderScheduleList(schedules);
+    _currentSchedules = schedules || [];
+    renderScheduleList(_currentSchedules);
   } catch (e) {
     list.innerHTML = `<p style="color:var(--c-red);font-size:.82rem;">Error: ${esc(e.message)}</p>`;
   }
@@ -1034,7 +1046,7 @@ function renderScheduleList(schedules) {
             ${badge}
           </div>
           <div style="font-size:.76rem;color:var(--text-muted);margin-top:.3rem;">
-            📱 WhatsApp: <b>${esc(target)}</b> · ${esc(_humanizeCron(s.cron))}
+            WhatsApp: <b>${esc(target)}</b> · ${esc(_humanizeCron(s.cron))}
           </div>
           <div style="font-size:.73rem;color:var(--text-muted);margin-top:.2rem;">
             Último envío: ${lastRun} · Próximo: ${nextRun}
@@ -1044,6 +1056,8 @@ function renderScheduleList(schedules) {
       <div style="display:flex;gap:.5rem;margin-top:.75rem;flex-wrap:wrap;">
         <button class="btn" onclick="runScheduleNow('${s.id}', this)"
                 style="font-size:.78rem;padding:.35rem .8rem;">Enviar ahora</button>
+        <button class="btn-ghost" onclick="loadScheduleIntoEditor('${s.id}')"
+                style="font-size:.78rem;padding:.35rem .7rem;" title="Cargar parámetros de este envío en el editor">Cargar en editor</button>
         <button class="btn-ghost" onclick="toggleScheduleItem('${s.id}')"
                 style="font-size:.78rem;padding:.35rem .7rem;">${s.active ? 'Pausar' : 'Activar'}</button>
         <button class="btn-ghost" onclick="deleteScheduleItem('${s.id}')"
@@ -1054,58 +1068,225 @@ function renderScheduleList(schedules) {
   }).join('');
 }
 
-/** Construye el payload de config para el schedule a partir del formulario */
-function _buildScheduleConfig() {
-  return {
-    tipo: 'ejecutivo',
-    ejes: [],
-    periodo_dias: parseInt(document.getElementById('sendPeriodo').value) || 7,
-    num_items: parseInt(document.getElementById('sendNumItems').value) || 4,
-    audiencia: document.getElementById('sendAudiencia').value.trim() || 'Juan Carlos Camelo',
-    notas: '',
-    model: document.getElementById('sendModel').value || 'gpt-4o',
-    buscar_web: document.getElementById('sendBuscarWeb').checked,
-    usar_contexto: true,
-  };
+/** Carga la configuración de una programación en el formulario de edición */
+function loadScheduleIntoEditor(id) {
+  const s = _currentSchedules.find(x => x.id === id);
+  if (!s || !s.config) return;
+  const cfg = s.config;
+
+  if (cfg.tipo && document.getElementById('tipo')) {
+    document.getElementById('tipo').value = cfg.tipo;
+  }
+  if (cfg.periodo_dias && document.getElementById('periodo')) {
+    document.getElementById('periodo').value = cfg.periodo_dias;
+  }
+  if (cfg.num_items && document.getElementById('num')) {
+    document.getElementById('num').value = cfg.num_items;
+  }
+  if (cfg.audiencia && document.getElementById('audiencia')) {
+    document.getElementById('audiencia').value = cfg.audiencia;
+  }
+  if (cfg.notas != null && document.getElementById('notas')) {
+    document.getElementById('notas').value = cfg.notas;
+  }
+  if (s.whatsapp_to && document.getElementById('sendWhatsAppTo')) {
+    document.getElementById('sendWhatsAppTo').value = s.whatsapp_to;
+  }
+  if (s.name && document.getElementById('sendName')) {
+    document.getElementById('sendName').value = s.name;
+  }
+  if (s.cron && document.getElementById('sendFreqPreset')) {
+    const sel = document.getElementById('sendFreqPreset');
+    const hasOpt = [...sel.options].some(o => o.value === s.cron);
+    if (hasOpt) {
+      sel.value = s.cron;
+      _syncCronInput();
+    } else {
+      sel.value = 'custom';
+      _syncCronInput();
+      const cronInp = document.getElementById('sendCron');
+      if (cronInp) cronInp.value = s.cron;
+    }
+  }
+
+  // Sincronizar chips de ejes
+  if (Array.isArray(cfg.ejes)) {
+    const chips = document.querySelectorAll('#chips .chip');
+    chips.forEach(c => {
+      const match = cfg.ejes.includes(c.dataset.eje);
+      c.setAttribute('aria-pressed', String(match));
+    });
+    const existingEjes = [...chips].map(c => c.dataset.eje);
+    cfg.ejes.forEach(eje => {
+      if (!existingEjes.includes(eje)) {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.setAttribute('aria-pressed', 'true');
+        chip.dataset.eje = eje;
+        chip.innerHTML = `${esc(eje)} <span class="chip-x" title="Quitar">×</span>`;
+        document.getElementById('chips').appendChild(chip);
+      }
+    });
+  }
+
+  const accordion = document.getElementById('scheduleAccordion');
+  if (accordion) accordion.open = true;
+
+  const configPanel = document.getElementById('configPanel');
+  if (configPanel) configPanel.scrollIntoView({ behavior: 'smooth' });
+
+  const stat = document.getElementById('sendImmediateStatus');
+  if (stat) {
+    stat.style.color = 'var(--c-blue-dark)';
+    stat.textContent = `Configuración de "${s.name}" cargada en el editor.`;
+    setTimeout(() => { if (stat) stat.textContent = ''; }, 4000);
+  }
 }
 
-/** Crea una nueva programación */
-async function createSchedule() {
-  const name = document.getElementById('sendName').value.trim();
-  const target = document.getElementById('sendEmail').value.trim();
+/** Crea o guarda una programación usando la configuración exacta del formulario unificado */
+async function createScheduleFromUnifiedForm() {
+  const name = (document.getElementById('sendName')?.value || '').trim();
+  const target = (document.getElementById('sendWhatsAppTo')?.value || '').trim();
   const cron = _activeCron();
   const statusEl = document.getElementById('sendCreateStatus');
   const btn = document.getElementById('btnCreateSchedule');
 
-  if (!name) { statusEl.style.color = 'var(--c-red)'; statusEl.textContent = 'Falta el nombre de la programación.'; return; }
-  if (!target) { statusEl.style.color = 'var(--c-red)'; statusEl.textContent = 'Falta el número o grupo de WhatsApp destino.'; return; }
-  if (!cron) { statusEl.style.color = 'var(--c-red)'; statusEl.textContent = 'Falta la expresión cron.'; return; }
+  if (!name) {
+    if (statusEl) { statusEl.style.color = 'var(--c-red)'; statusEl.textContent = 'Falta el nombre de la programación.'; }
+    document.getElementById('sendName')?.focus();
+    return;
+  }
+  if (!target) {
+    if (statusEl) { statusEl.style.color = 'var(--c-red)'; statusEl.textContent = 'Falta el número o grupo de WhatsApp destino (ingrésalo en el campo superior).'; }
+    document.getElementById('sendWhatsAppTo')?.focus();
+    return;
+  }
+  if (!cron) {
+    if (statusEl) { statusEl.style.color = 'var(--c-red)'; statusEl.textContent = 'Falta la frecuencia de envío.'; }
+    return;
+  }
 
-  btn.disabled = true;
-  statusEl.style.color = 'var(--text-muted)';
-  statusEl.textContent = 'Creando…';
+  const cfg = getConfig();
+  cfg.model = localStorage.getItem('claude_model_generation') || 'claude-sonnet-4-6';
+
+  if (btn) btn.disabled = true;
+  if (statusEl) {
+    statusEl.style.color = 'var(--text-muted)';
+    statusEl.textContent = 'Guardando programación con la configuración actual…';
+  }
 
   try {
     const r = await fetch('/api/schedules', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, whatsapp_to: target, email_to: target, cron, config: _buildScheduleConfig() }),
+      body: JSON.stringify({ name, whatsapp_to: target, email_to: target, cron, config: cfg }),
     });
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
       throw new Error(err.detail || `HTTP ${r.status}`);
     }
-    statusEl.style.color = 'var(--c-green)';
-    statusEl.textContent = '✓ Programación creada para WhatsApp.';
-    document.getElementById('sendName').value = '';
-    document.getElementById('sendEmail').value = '';
+    if (statusEl) {
+      statusEl.style.color = 'var(--c-green)';
+      statusEl.textContent = 'Programación guardada exitosamente con los ejes temáticos y parámetros seleccionados.';
+    }
     await loadSchedules();
+    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
   } catch (e) {
-    statusEl.style.color = 'var(--c-red)';
-    statusEl.textContent = `Error: ${e.message}`;
+    if (statusEl) {
+      statusEl.style.color = 'var(--c-red)';
+      statusEl.textContent = `Error: ${e.message}`;
+    }
   } finally {
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
   }
+}
+
+/** Envía directamente por WhatsApp la edición que acaba de ser generada */
+async function sendCurrentEditionWhatsApp() {
+  const target = (document.getElementById('sendWhatsAppTo')?.value || '').trim();
+  const statusEl = document.getElementById('sendImmediateStatus');
+  const btn = document.getElementById('btnSendWhatsAppNow');
+
+  if (!_lastGeneratedNewsletter) {
+    if (statusEl) {
+      statusEl.style.color = 'var(--c-yellow)';
+      statusEl.textContent = 'Primero genera el newsletter pulsando "Generar newsletter" para poder enviarlo.';
+    }
+    return;
+  }
+
+  if (!target) {
+    if (statusEl) {
+      statusEl.style.color = 'var(--c-red)';
+      statusEl.textContent = 'Ingresa el número o grupo de WhatsApp en el campo correspondiente.';
+    }
+    document.getElementById('sendWhatsAppTo')?.focus();
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+  if (statusEl) {
+    statusEl.style.color = 'var(--text-muted)';
+    statusEl.textContent = `Enviando texto y documento PDF a ${target} vía WhatsApp...`;
+  }
+
+  try {
+    const res = await fetch('/api/whatsapp/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: target,
+        newsletter: _lastGeneratedNewsletter
+      })
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.detail || `HTTP ${res.status}`);
+    }
+
+    if (statusEl) {
+      statusEl.style.color = 'var(--c-green)';
+      statusEl.textContent = `Enviado exitosamente a ${target} (Texto y PDF adjunto).`;
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 6000);
+    }
+  } catch (e) {
+    if (statusEl) {
+      statusEl.style.color = 'var(--c-red)';
+      statusEl.textContent = `Error enviando a WhatsApp: ${e.message}`;
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/** Copia el texto formateado para WhatsApp al portapapeles */
+function copyNewsletterWhatsAppText(btn) {
+  if (!_lastGeneratedNewsletter) return;
+  let txt = `*Universidad de La Sabana*\n*${_lastGeneratedNewsletter.titulo || 'Newsletter Ejecutivo'}*\n${_lastGeneratedNewsletter.fecha || ''} - ${_lastGeneratedNewsletter.contexto || ''}\n\n`;
+  if (_lastGeneratedNewsletter.cifras && _lastGeneratedNewsletter.cifras.length) {
+    txt += `*Cifras importantes del sector*\n\n`;
+    _lastGeneratedNewsletter.cifras.forEach(c => {
+      txt += `*${c.dato}*\n${c.contexto || ''}\nFuente (${c.fuente || ''} | ${c.fecha_publicacion || ''}): ${c.url || ''}\n\n`;
+    });
+  }
+  if (_lastGeneratedNewsletter.items && _lastGeneratedNewsletter.items.length) {
+    _lastGeneratedNewsletter.items.forEach(it => {
+      txt += `*${it.eje || ''}*\n*${it.titular || ''}*\n${it.resumen || ''}\n*Por qué importa:* ${it.por_que_importa || ''}\nFuente (${it.fuente || ''} | ${it.fecha_publicacion || ''}): ${it.url || ''}\n\n`;
+    });
+  }
+  if (_lastGeneratedNewsletter.oportunidades && _lastGeneratedNewsletter.oportunidades.length) {
+    txt += `*Oportunidades accionables*\n\n`;
+    _lastGeneratedNewsletter.oportunidades.forEach(o => {
+      if (typeof o === 'string') txt += `- ${o}\n`;
+      else txt += `- ${o.texto || ''} — Fuente (${o.fuente || ''}): ${o.url || ''}\n`;
+    });
+  }
+  navigator.clipboard.writeText(txt.trim()).then(() => {
+    const prev = btn.textContent;
+    btn.textContent = 'Copiado';
+    setTimeout(() => { btn.textContent = prev; }, 2000);
+  });
 }
 
 /** Dispara una generación + envío en segundo plano para el schedule dado y sondea su progreso */
@@ -1167,7 +1348,7 @@ async function runScheduleNow(id, btn) {
           } else {
             if (statusEl) {
               statusEl.style.color = 'var(--c-green)';
-              statusEl.textContent = `✓ Enviado por WhatsApp exitosamente. Reporte guardado en historial.`;
+              statusEl.textContent = `Enviado por WhatsApp exitosamente. Reporte guardado en historial.`;
             }
           }
           await loadSchedules();
@@ -1352,7 +1533,7 @@ async function loadHistorialReport(id) {
         <h3>${titleHtml}</h3>
         <p>${esc(it.resumen || '')}</p>
         ${it.por_que_importa ? `<div class="nl-why"><b>Por qué importa:</b> ${esc(it.por_que_importa)}</div>` : ''}
-        <p class="nl-src">Fuente: ${srcHtml}${it.fecha_publicacion ? ` · <span style="color:var(--text-muted);font-weight:500;">📅 ${esc(it.fecha_publicacion)}</span>` : ''}</p>
+        <p class="nl-src">Fuente: ${srcHtml}${it.fecha_publicacion ? ` · <span style="color:var(--text-muted);font-weight:500;">${esc(it.fecha_publicacion)}</span>` : ''}</p>
       </div>`;
     }).join('');
     const oppsHtml = (d.oportunidades && d.oportunidades.length) ? `
@@ -1447,7 +1628,7 @@ async function checkServerKeyStatus() {
     if (response.ok) {
       const data = await response.json();
       if (data.has_api_key) {
-        serverStatusEl.textContent = 'Configurada en el servidor (ANTHROPIC_API_KEY) ✓';
+        serverStatusEl.textContent = 'Configurada en el servidor (ANTHROPIC_API_KEY)';
         serverStatusEl.style.color = 'var(--c-green)';
       } else {
         serverStatusEl.textContent = 'Sin configurar en el servidor (Falta ANTHROPIC_API_KEY)';
@@ -1482,7 +1663,7 @@ async function checkWhatsAppStatus() {
       srvEl.style.color = 'var(--c-green)';
 
       if (data.connected) {
-        sesEl.textContent = 'Conectado a WhatsApp ✓';
+        sesEl.textContent = 'Conectado a WhatsApp';
         sesEl.style.color = 'var(--c-green)';
         if (helpEl) helpEl.textContent = 'Listo para enviar newsletters por WhatsApp.';
       } else {
@@ -1617,10 +1798,10 @@ const tutorialSteps = [
   },
   {
     badge: "Paso 3 de 5",
-    title: "Automatización de Envíos",
-    desc: "En la pestaña de <b>Envío</b> puedes programar de forma recurrentes las entregas a través de reglas cron (por ejemplo, cada lunes a las 7:00 AM) y enviarlas automáticamente por correo electrónico.",
+    title: "Programación y Envío a WhatsApp",
+    desc: "En la misma sección de <b>Newsletter y Envío</b> puedes despachar el informe inmediatamente a WhatsApp (con PDF ejecutivo) o activar la programación recurrente con tus parámetros exactos de personalización.",
     visual: `<svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline><path d="M22 2L11 13"></path><path d="M22 2l-7 20-4-9-9-4 20-7z"></path></svg>`,
-    tab: "send"
+    tab: "nl"
   },
   {
     badge: "Paso 4 de 5",

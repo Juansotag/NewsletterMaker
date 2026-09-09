@@ -72,16 +72,16 @@ def render_whatsapp_text(newsletter: dict) -> str:
             url_c  = clean_url(c.get("url") or c.get("link") or "")
 
             fecha_pub = clean_text(c.get("fecha_publicacion") or "")
-            fuente_label = f"{fuente} · 📅 {fecha_pub}" if (fuente and fecha_pub) else (fuente or fecha_pub)
+            fuente_label = f"{fuente} | {fecha_pub}" if (fuente and fecha_pub) else (fuente or fecha_pub)
 
             if dato:
                 lines.append(f"*{dato}*")
             if ctx_c:
                 lines.append(ctx_c)
             if fuente_label and url_c:
-                lines.append(f"🔗 Fuente ({fuente_label}): {url_c}")
+                lines.append(f"Fuente ({fuente_label}): {url_c}")
             elif url_c:
-                lines.append(f"🔗 Enlace{f' (📅 {fecha_pub})' if fecha_pub else ''}: {url_c}")
+                lines.append(f"Enlace{f' ({fecha_pub})' if fecha_pub else ''}: {url_c}")
             elif fuente_label:
                 lines.append(f"Fuente: _{fuente_label}_")
             lines.append("")
@@ -99,7 +99,7 @@ def render_whatsapp_text(newsletter: dict) -> str:
             fuente_i  = clean_text(it.get("fuente") or "")
             fecha_pub = clean_text(it.get("fecha_publicacion") or "")
             url_i     = clean_url(it.get("url") or it.get("link") or "")
-            fuente_label = f"{fuente_i} · 📅 {fecha_pub}" if (fuente_i and fecha_pub) else (fuente_i or fecha_pub)
+            fuente_label = f"{fuente_i} | {fecha_pub}" if (fuente_i and fecha_pub) else (fuente_i or fecha_pub)
 
             if eje:
                 lines.append(f"*{eje}*")
@@ -110,9 +110,9 @@ def render_whatsapp_text(newsletter: dict) -> str:
             if pqi:
                 lines.append(f"*Por qué importa:* {pqi}")
             if fuente_label and url_i:
-                lines.append(f"🔗 Fuente ({fuente_label}): {url_i}")
+                lines.append(f"Fuente ({fuente_label}): {url_i}")
             elif url_i:
-                lines.append(f"🔗 Enlace{f' (📅 {fecha_pub})' if fecha_pub else ''}: {url_i}")
+                lines.append(f"Enlace{f' ({fecha_pub})' if fecha_pub else ''}: {url_i}")
             elif fuente_label:
                 lines.append(f"Fuente: _{fuente_label}_")
 
@@ -125,7 +125,7 @@ def render_whatsapp_text(newsletter: dict) -> str:
         lines.append("")
         for o in opps:
             if isinstance(o, str):
-                lines.append(f"• {clean_text(o)}")
+                lines.append(f"- {clean_text(o)}")
             elif isinstance(o, dict):
                 texto    = clean_text(o.get("texto") or o.get("text") or o.get("descripcion") or "")
                 fuente_o = clean_text(o.get("fuente") or "")
@@ -133,16 +133,16 @@ def render_whatsapp_text(newsletter: dict) -> str:
 
                 link_part = ""
                 if fuente_o and url_o:
-                    link_part = f" — 🔗 {fuente_o}: {url_o}"
+                    link_part = f" — Fuente ({fuente_o}): {url_o}"
                 elif url_o:
-                    link_part = f" — 🔗 {url_o}"
+                    link_part = f" — Enlace: {url_o}"
                 elif fuente_o:
                     link_part = f" — _{fuente_o}_"
 
                 if texto:
-                    lines.append(f"{texto}{link_part}")
+                    lines.append(f"- {texto}{link_part}")
                 elif link_part:
-                    lines.append(link_part.lstrip(" — "))
+                    lines.append(f"- {link_part.lstrip(' — ')}")
         lines.append("")
 
     return "\n".join(lines).strip()

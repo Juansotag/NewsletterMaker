@@ -354,6 +354,11 @@ class AssistResponse(BaseModel):
     modified_content: str
 
 
+class WhatsAppSendDirectRequest(BaseModel):
+    to: str
+    newsletter: dict
+
+
 MESES_ES = {
     1: "enero", 2: "febrero", 3: "marzo", 4: "abril",
     5: "mayo", 6: "junio", 7: "julio", 8: "agosto",
@@ -466,7 +471,7 @@ def build_user_message(cfg: Config | dict) -> str:
 
     if cfg.buscar_web:
         instrucciones_busqueda = (
-            f"🚨 DIRECTRIZ TEMPORAL ESTRICTA Y OBLIGATORIA (TOLERANCIA CERO A NOTICIAS VIEJAS) 🚨\n"
+            f"[DIRECTRIZ TEMPORAL ESTRICTA Y OBLIGATORIA (TOLERANCIA CERO A NOTICIAS VIEJAS)]\n"
             f"- FECHA ACTUAL: {hoy_str} ({hoy_humano}).\n"
             f"- PERÍODO EXACTO DE COBERTURA: Del {desde_str} al {hoy_str} ({desde_humano} al {hoy_humano} — últimos {cfg.periodo_dias} días).\n"
             f"- ESTÁ ESTRICTAMENTE PROHIBIDO incluir noticias, artículos, estudios o estadísticas publicados antes del {desde_str}.\n"
@@ -1154,7 +1159,7 @@ async def _execute_schedule_job(schedule_id: str, api_key: str):
                     target,
                     pdf_bytes,
                     filename=pdf_filename,
-                    caption=f"📄 {titulo} — Universidad de La Sabana"
+                    caption=f"{titulo} — Universidad de La Sabana"
                 )
                 if pdf_res.get("success"):
                     pdf_id = pdf_res.get("id", "")
@@ -1192,7 +1197,7 @@ async def _execute_schedule_job(schedule_id: str, api_key: str):
 
         SCHEDULE_JOBS[schedule_id] = {
             "status": "completed",
-            "step": "✓ Proceso completado exitosamente (Texto + PDF enviados)",
+            "step": "Proceso completado exitosamente (Texto + PDF enviados)",
             "titulo": titulo,
             "whatsapp_id": whatsapp_id,
             "whatsapp_error": whatsapp_error,
@@ -1252,11 +1257,57 @@ def get_schedule_run_status(schedule_id: str):
     return job
 
 
-# ─── WhatsApp status endpoint ──────────────────────────────────────────────────
+# ─── WhatsApp endpoints ────────────────────────────────────────────────────────
 @app.get("/api/whatsapp/status")
 def get_whatsapp_status():
     """Consulta el estado del servidor de WhatsApp (Evolution API o Open-Wa)."""
     return check_whatsapp_status()
+
+
+@app.post("/api/whatsapp/send")
+async def send_whatsapp_direct(req: WhatsAppSendDirectRequest):
+    """Envía directamente un newsletter a WhatsApp (mensaje enriquecido + documento PDF adjunto)."""
+    if not req.to:
+        raise HTTPException(status_code=400, detail="Falta el número o grupo de WhatsApp destino")
+    if not req.newsletter:
+        raise HTTPException(status_code=400, detail="Falta el contenido del newsletter")
+
+    target = normalize_whatsapp_number(req.to)
+
+    # 1. Formatear y enviar texto enriquecido
+    whatsapp_text = render_whatsapp_text(req.newsletter)
+    text_res = send_whatsapp_text(target, whatsapp_text)
+    if not text_res.get("success"):
+        raise HTTPException(status_code=500, detail=text_res.get("error", "Error enviando mensaje de texto a WhatsApp"))
+
+    # 2. Generar y enviar documento PDF ejecutivo adjunto
+    pdf_id = ""
+    pdf_error = ""
+    try:
+        pdf_bytes = generate_newsletter_pdf(req.newsletter)
+        clean_fecha = req.newsletter.get("fecha") or datetime.date.today().isoformat()
+        pdf_filename = f"Radar_Ejecutivo_{clean_fecha}.pdf"
+        titulo = req.newsletter.get("titulo") or "Radar Ejecutivo"
+        pdf_res = send_whatsapp_document(
+            target,
+            pdf_bytes,
+            filename=pdf_filename,
+            caption=f"{titulo} — Universidad de La Sabana"
+        )
+        if pdf_res.get("success"):
+            pdf_id = pdf_res.get("id", "")
+        else:
+            pdf_error = pdf_res.get("error", "")
+    except Exception as pe:
+        pdf_error = str(pe)
+
+    return {
+        "success": True,
+        "message": f"Enviado exitosamente a {target} (Texto y Documento PDF)",
+        "text_id": text_res.get("id", ""),
+        "pdf_id": pdf_id,
+        "pdf_error": pdf_error
+    }
 
 
 @app.post("/api/docs/assist", response_model=AssistResponse)
