@@ -6,3 +6,12 @@ _IGNORE_*
 *.postman_collection.json
 *.sw_col.json
 .node-persist/
+
+# managed
+**.data.json
+**.node-persist**
+**_IGNORE_**
+# end managed
+node_modules
+package.json
+package-lock.json

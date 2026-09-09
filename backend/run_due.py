@@ -39,20 +39,21 @@ _resend_key    = os.environ.get("RESEND_API_KEY", "")
 _from_email    = os.environ.get("RESEND_FROM_EMAIL", "onboarding@resend.dev")
 
 
-# ── Generación sin streaming ──────────────────────────────────────────────────
+# ── Generación con OpenAI (GPT-4o) ─────────────────────────────────────────────
 async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str]]:
     """
-    Genera el newsletter completo sin streaming.
+    Genera el newsletter completo usando OpenAI GPT-4o con búsqueda web.
     Retorna (newsletter_json, search_queries).
     """
-    import re as _re
+    import openai
+    from backend.web_search import perform_web_search, format_search_results_for_llm
+    from backend.main import WEB_SEARCH_TOOL
 
-    # Leer la clave en el momento de la llamada (no en import)
-    key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    key = api_key or os.environ.get("OPENAI_API_KEY", "")
     if not key:
-        raise ValueError("ANTHROPIC_API_KEY no configurada")
+        raise ValueError("OPENAI_API_KEY no configurada")
 
-    client = anthropic.AsyncAnthropic(api_key=key)
+    client = openai.AsyncOpenAI(api_key=key)
 
     # System prompt
     try:
@@ -73,7 +74,6 @@ async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str
             folder = doc.get("folder", "")
             name   = doc.get("name", "")
             cont   = doc.get("content", "").strip()
-            # Resolver referencias @doc.md con detección de ciclos
             cont   = resolve_doc_references(cont, loading_stack=[name])
             desc   = doc.get("description", "").strip()
             path   = f"{folder}/{name}" if folder else name
@@ -84,54 +84,69 @@ async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str
         ctx_text = ""
 
     system_prompt = sp_template.replace("{ctx}", ctx_text)
-
     user_msg = build_user_message(config)
 
-    VALID = {"claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6"}
-    model = config.get("model", "claude-sonnet-4-6")
-    if model not in VALID:
-        model = "claude-sonnet-4-6"
+    model = config.get("model", "gpt-4o")
+    if "claude" in model.lower():
+        model = "gpt-4o"
 
-    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 10}]
-    if not config.get("buscar_web", True):
-        tools = []
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_msg}
+    ]
 
-    full_text      = ""
+    tools = [WEB_SEARCH_TOOL] if config.get("buscar_web", True) else None
     search_queries: list[str] = []
-    block_type     = ""
-    tool_input     = ""
 
-    async with client.messages.stream(
+    # Ronda de búsqueda web si está activada
+    max_search_rounds = 3
+    round_idx = 0
+
+    while config.get("buscar_web", True) and round_idx < max_search_rounds:
+        round_idx += 1
+        completion = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+            temperature=0.7,
+        )
+        msg = completion.choices[0].message
+        tool_calls = getattr(msg, "tool_calls", None)
+
+        if not tool_calls:
+            break
+
+        messages.append(msg)
+
+        for tc in tool_calls:
+            if tc.function.name == "web_search":
+                try:
+                    args = json.loads(tc.function.arguments)
+                    q = args.get("query", "")
+                except Exception:
+                    q = tc.function.arguments or ""
+
+                if q:
+                    search_queries.append(q)
+                    raw_results = perform_web_search(q, max_results=5)
+                    content_str = format_search_results_for_llm(raw_results)
+                else:
+                    content_str = "No se proporcionó término de búsqueda."
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": content_str
+                })
+
+    # Generación final estructurada
+    final_resp = await client.chat.completions.create(
         model=model,
-        max_tokens=8192,
-        system=system_prompt,
-        tools=tools,
-        messages=[{"role": "user", "content": user_msg}],
-    ) as stream:
-        async for event in stream:
-            etype = getattr(event, "type", "") or ""
-            if etype == "content_block_start":
-                block = getattr(event, "content_block", None)
-                block_type = getattr(block, "type", "") or ""
-                tool_input = ""
-            elif etype == "content_block_delta":
-                delta = getattr(event, "delta", None)
-                dtype = getattr(delta, "type", "") or ""
-                if dtype == "text_delta":
-                    full_text += getattr(delta, "text", "")
-                elif dtype == "input_json_delta":
-                    tool_input += getattr(delta, "partial_json", "")
-            elif etype == "content_block_stop":
-                if block_type == "tool_use" and tool_input:
-                    try:
-                        ti = json.loads(tool_input)
-                        q  = ti.get("query", "")
-                        if q:
-                            search_queries.append(q)
-                    except Exception:
-                        pass
-
-    # Extraer JSON
+        messages=messages,
+        temperature=0.7,
+    )
+    full_text = final_resp.choices[0].message.content or "{}"
     newsletter_json = extract_json(full_text)
     return newsletter_json, search_queries
 

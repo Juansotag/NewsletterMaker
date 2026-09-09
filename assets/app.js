@@ -69,7 +69,7 @@ function getConfig() {
 // ══════════════════════════════════════════════════════
 async function generar() {
   const cfg = getConfig();
-  cfg.model = localStorage.getItem('anthropic_model_generation') || 'claude-sonnet-4-6';
+  cfg.model = localStorage.getItem('openai_model_generation') || 'gpt-4o';
   const btn = document.getElementById('generar');
   const label = document.getElementById('btnLabel');
 
@@ -78,14 +78,12 @@ async function generar() {
   showLiveLog();
 
   try {
-    label.innerHTML = '<span class="spinner"></span> Buscando y redactando…';
+    label.innerHTML = '<span class="spinner"></span> Buscando y redactando con GPT-4o…';
 
-    const apiKey = localStorage.getItem('anthropic_api_key') || '';
     const response = await fetch('/api/generate/stream', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': apiKey
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify(cfg)
     });
@@ -696,13 +694,11 @@ async function sendAiChatMessage() {
   const name = document.getElementById('ctxNameInput').value;
 
   try {
-    const apiKey = localStorage.getItem('anthropic_api_key') || '';
-    const model = localStorage.getItem('anthropic_model_assist') || 'claude-haiku-4-5-20251001';
+    const model = localStorage.getItem('openai_model_assist') || 'gpt-4o';
     const r = await fetch('/api/docs/assist', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': apiKey
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({ name, content, instruction, model })
     });
@@ -1067,7 +1063,7 @@ function _buildScheduleConfig() {
     num_items: parseInt(document.getElementById('sendNumItems').value) || 4,
     audiencia: document.getElementById('sendAudiencia').value.trim() || 'Juan Carlos Camelo',
     notas: '',
-    model: document.getElementById('sendModel').value || 'claude-sonnet-4-6',
+    model: document.getElementById('sendModel').value || 'gpt-4o',
     buscar_web: document.getElementById('sendBuscarWeb').checked,
     usar_contexto: true,
   };
@@ -1388,8 +1384,6 @@ function _fmtDate(iso) {
 }
 
 // ══════════════════════════════════════════════════════
-// CONFIGURACIÓN DE API KEY (LOCALSTORAGE)
-// ══════════════════════════════════════════════════════
 async function checkServerKeyStatus() {
   const serverStatusEl = document.getElementById('serverKeyStatus');
   if (!serverStatusEl) return;
@@ -1398,10 +1392,10 @@ async function checkServerKeyStatus() {
     if (response.ok) {
       const data = await response.json();
       if (data.has_api_key) {
-        serverStatusEl.textContent = 'Configurada en variables de entorno (Railway)';
+        serverStatusEl.textContent = 'Configurada en el servidor (OPENAI_API_KEY) ✓';
         serverStatusEl.style.color = 'var(--c-green)';
       } else {
-        serverStatusEl.textContent = 'Sin configurar en el servidor';
+        serverStatusEl.textContent = 'Sin configurar en el servidor (Falta OPENAI_API_KEY)';
         serverStatusEl.style.color = 'var(--c-red)';
       }
     } else {
@@ -1409,21 +1403,13 @@ async function checkServerKeyStatus() {
       serverStatusEl.style.color = 'var(--c-yellow)';
     }
   } catch (e) {
-    serverStatusEl.textContent = 'Error de conexión';
+    serverStatusEl.textContent = 'Error de conexión con el backend';
     serverStatusEl.style.color = 'var(--c-yellow)';
   }
 }
 
-function updateBrowserKeyStatusLabel(hasKey) {
-  const browserStatusEl = document.getElementById('browserKeyStatus');
-  if (!browserStatusEl) return;
-  if (hasKey) {
-    browserStatusEl.textContent = 'Configurada en este navegador';
-    browserStatusEl.style.color = 'var(--c-green)';
-  } else {
-    browserStatusEl.textContent = 'Sin configurar';
-    browserStatusEl.style.color = 'var(--c-red)';
-  }
+function updateBrowserKeyStatusLabel() {
+  // Función legacy conservada para compatibilidad
 }
 
 async function checkWhatsAppStatus() {
@@ -1464,12 +1450,8 @@ async function checkWhatsAppStatus() {
 }
 
 function loadConfigTab() {
-  const key = localStorage.getItem('anthropic_api_key') || '';
-  const input = document.getElementById('apiKeyInput');
-  if (input) input.value = key;
-
-  const modelGen = localStorage.getItem('anthropic_model_generation') || 'claude-sonnet-4-6';
-  const modelAssist = localStorage.getItem('anthropic_model_assist') || 'claude-haiku-4-5-20251001';
+  const modelGen = localStorage.getItem('openai_model_generation') || 'gpt-4o';
+  const modelAssist = localStorage.getItem('openai_model_assist') || 'gpt-4o';
 
   const genSelect = document.getElementById('modelGenSelect');
   const assistSelect = document.getElementById('modelAssistSelect');
@@ -1477,57 +1459,45 @@ function loadConfigTab() {
   if (genSelect) genSelect.value = modelGen;
   if (assistSelect) assistSelect.value = modelAssist;
 
-  updateBrowserKeyStatusLabel(!!key);
   checkServerKeyStatus();
   checkWhatsAppStatus();
 }
 
 function saveConfig() {
-  const input = document.getElementById('apiKeyInput');
-  const val = input ? input.value.trim() : '';
-
-  if (val) {
-    localStorage.setItem('anthropic_api_key', val);
-    updateBrowserKeyStatusLabel(true);
-  } else {
-    localStorage.removeItem('anthropic_api_key');
-    updateBrowserKeyStatusLabel(false);
-  }
-
   const genSelect = document.getElementById('modelGenSelect');
   const assistSelect = document.getElementById('modelAssistSelect');
 
   if (genSelect) {
-    localStorage.setItem('anthropic_model_generation', genSelect.value);
+    localStorage.setItem('openai_model_generation', genSelect.value);
   }
   if (assistSelect) {
-    localStorage.setItem('anthropic_model_assist', assistSelect.value);
+    localStorage.setItem('openai_model_assist', assistSelect.value);
   }
 
   const badge = document.getElementById('configSavedBadge');
   if (badge) {
+    badge.textContent = 'Configuración Guardada';
     badge.classList.add('show');
     setTimeout(() => badge.classList.remove('show'), 3000);
   }
 }
 
 function clearConfig() {
-  const input = document.getElementById('apiKeyInput');
-  if (input) input.value = '';
-  localStorage.removeItem('anthropic_api_key');
-  localStorage.removeItem('anthropic_model_generation');
-  localStorage.removeItem('anthropic_model_assist');
+  localStorage.removeItem('openai_model_generation');
+  localStorage.removeItem('openai_model_assist');
 
   const genSelect = document.getElementById('modelGenSelect');
   const assistSelect = document.getElementById('modelAssistSelect');
-  if (genSelect) genSelect.value = 'claude-sonnet-4-6';
-  if (assistSelect) assistSelect.value = 'claude-haiku-4-5-20251001';
-
-  updateBrowserKeyStatusLabel(false);
+  if (genSelect) genSelect.value = 'gpt-4o';
+  if (assistSelect) assistSelect.value = 'gpt-4o';
 
   const badge = document.getElementById('configSavedBadge');
   if (badge) {
-    badge.textContent = 'Configuración Eliminada';
+    badge.textContent = 'Configuración Restablecida';
+    badge.classList.add('show');
+    setTimeout(() => badge.classList.remove('show'), 3000);
+  }
+}
     badge.style.color = 'var(--c-red)';
     badge.classList.add('show');
     setTimeout(() => {
