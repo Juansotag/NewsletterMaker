@@ -1108,33 +1108,83 @@ async function createSchedule() {
   }
 }
 
-/** Dispara una generación + envío inmediato para el schedule dado */
+/** Dispara una generación + envío inmediato para el schedule dado con streaming SSE */
 async function runScheduleNow(id, btn) {
   const statusEl = document.getElementById(`sched-status-${id}`);
   if (btn) btn.disabled = true;
-  if (statusEl) { statusEl.style.color = 'var(--text-muted)'; statusEl.textContent = 'Generando y enviando por WhatsApp…'; }
+  if (statusEl) {
+    statusEl.style.color = 'var(--text-muted)';
+    statusEl.textContent = 'Iniciando generación con Claude…';
+  }
 
   try {
-    const r = await fetch(`/api/schedules/${id}/run`, {
+    const response = await fetch(`/api/schedules/${id}/run`, {
       method: 'POST',
     });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
 
-    if (data.whatsapp_error) {
-      if (statusEl) {
-        statusEl.style.color = 'var(--c-yellow)';
-        statusEl.textContent = `Newsletter generado pero aviso de WhatsApp: ${data.whatsapp_error}`;
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || `Error HTTP ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalResult = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const ev = JSON.parse(line.slice(6));
+          if (ev.type === 'searching') {
+            if (statusEl) statusEl.textContent = ev.message || `Buscando en la web (${ev.count})…`;
+          } else if (ev.type === 'writing') {
+            if (statusEl) statusEl.textContent = ev.message || 'Redactando newsletter con Claude…';
+          } else if (ev.type === 'status') {
+            if (statusEl) statusEl.textContent = ev.message;
+          } else if (ev.type === 'done') {
+            finalResult = ev;
+          } else if (ev.type === 'error') {
+            throw new Error(ev.error || 'Error en el servidor');
+          }
+        } catch (err) {
+          if (err.message && !err.message.includes('JSON')) throw err;
+        }
+      }
+    }
+
+    if (finalResult) {
+      if (finalResult.whatsapp_error) {
+        if (statusEl) {
+          statusEl.style.color = 'var(--c-yellow)';
+          statusEl.textContent = `Newsletter generado pero aviso de WhatsApp: ${finalResult.whatsapp_error}`;
+        }
+      } else {
+        if (statusEl) {
+          statusEl.style.color = 'var(--c-green)';
+          statusEl.textContent = `✓ Enviado por WhatsApp exitosamente. Reporte guardado en historial.`;
+        }
       }
     } else {
       if (statusEl) {
         statusEl.style.color = 'var(--c-green)';
-        statusEl.textContent = `✓ Enviado por WhatsApp exitosamente. Reporte guardado en historial.`;
+        statusEl.textContent = `✓ Proceso completado exitosamente.`;
       }
     }
     await loadSchedules();
   } catch (e) {
-    if (statusEl) { statusEl.style.color = 'var(--c-red)'; statusEl.textContent = `Error: ${e.message}`; }
+    if (statusEl) {
+      statusEl.style.color = 'var(--c-red)';
+      statusEl.textContent = `Error: ${e.message}`;
+    }
   } finally {
     if (btn) btn.disabled = false;
   }

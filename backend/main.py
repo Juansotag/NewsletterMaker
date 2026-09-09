@@ -845,88 +845,155 @@ def toggle_schedule(schedule_id: str):
 
 @app.post("/api/schedules/{schedule_id}/run")
 async def run_schedule_now(schedule_id: str, x_api_key: str = Header(default="")):
-    """Disparo manual: genera el newsletter, lo envía por WhatsApp y registra reporte con origen='programado'."""
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
-    try:
-        cur = supabase_client.table("schedules").select("*").eq("id", schedule_id).execute()
-        if not cur.data:
-            raise HTTPException(status_code=404, detail="Schedule no encontrado")
-        sched = cur.data[0]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    api_key = resolve_api_key(x_api_key)
-    if not api_key:
-        raise HTTPException(status_code=400, detail="Falta la clave API de Anthropic (ANTHROPIC_API_KEY en variables de entorno)")
-
-    config  = sched.get("config", {})
-    target  = sched.get("whatsapp_to") or sched.get("email_to", "")
-    cron    = sched.get("cron", "0 7 * * 1")
-    name    = sched.get("name", "Schedule")
-
-    # Generar newsletter
-    try:
-        from backend.run_due import generate_once as _gen
-        newsletter, queries = await _gen(config, api_key=api_key)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generando newsletter: {e}")
-
-    titulo = newsletter.get("titulo", name)
-    whatsapp_text = render_whatsapp_text(newsletter)
-
-    # Enviar WhatsApp vía Open-Wa
-    whatsapp_id = ""
-    whatsapp_error = ""
-    if target:
+    """Disparo manual con streaming SSE para evitar timeouts de proxy (502) en Railway y reportar progreso en vivo."""
+    async def event_generator():
         try:
-            res = send_whatsapp_text(target, whatsapp_text)
-            if res.get("success"):
-                whatsapp_id = res.get("id", "")
+            yield f"data: {json.dumps({'type':'status','message':'Iniciando ejecución manual del schedule...'})}\n\n"
+
+            if not supabase_client:
+                yield f"data: {json.dumps({'type':'error','error':'Supabase client no inicializado en el servidor'})}\n\n"
+                return
+
+            try:
+                cur = supabase_client.table("schedules").select("*").eq("id", schedule_id).execute()
+                if not cur.data:
+                    yield f"data: {json.dumps({'type':'error','error':'Schedule no encontrado'})}\n\n"
+                    return
+                sched = cur.data[0]
+            except Exception as se:
+                yield f"data: {json.dumps({'type':'error','error':f'Error consultando schedule en Supabase: {se}'})}\n\n"
+                return
+
+            api_key = resolve_api_key(x_api_key)
+            if not api_key:
+                yield f"data: {json.dumps({'type':'error','error':'Falta la clave API de Anthropic (ANTHROPIC_API_KEY en variables de entorno)'})}\n\n"
+                return
+
+            config  = sched.get("config", {}) or {}
+            target  = sched.get("whatsapp_to") or sched.get("email_to", "")
+            cron    = sched.get("cron", "0 7 * * 1")
+            name    = sched.get("name", "Schedule")
+
+            yield f"data: {json.dumps({'type':'status','message':'Cargando contexto institucional y conectando con Claude Sonnet...'})}\n\n"
+
+            if config.get("usar_contexto", True):
+                context_docs = load_contexto_docs_db()
             else:
-                whatsapp_error = res.get("error", "Error desconocido enviando por WhatsApp")
-                print(f"[run_now] Error enviando WhatsApp: {whatsapp_error}")
+                context_docs = "No se incluye contexto institucional."
+            system_prompt = build_system_prompt_db(context_docs)
+            tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 10}] if config.get("buscar_web", True) else []
+
+            model = config.get("model", "claude-sonnet-4-6")
+            if model not in VALID_MODELS:
+                model = "claude-sonnet-4-6"
+
+            client = get_anthropic_client(api_key)
+            full_text = ""
+            search_count = 0
+            search_queries = []
+            current_block_type = ""
+            current_tool_input = ""
+
+            yield f"data: {json.dumps({'type':'status','message':'Iniciando búsqueda web y redacción ejecutiva...'})}\n\n"
+
+            async with client.messages.stream(
+                model=model,
+                max_tokens=8192,
+                system=system_prompt,
+                tools=tools,
+                messages=[{"role": "user", "content": build_user_message(config)}],
+            ) as stream:
+                async for event in stream:
+                    etype = getattr(event, "type", "") or ""
+
+                    if etype == "content_block_start":
+                        block = getattr(event, "content_block", None)
+                        current_block_type = getattr(block, "type", "") or ""
+                        current_tool_input = ""
+                        if current_block_type == "tool_use":
+                            search_count += 1
+                            yield f"data: {json.dumps({'type':'searching','count':search_count,'message':f'Buscando en la web ({search_count})...'})}\n\n"
+
+                    elif etype == "content_block_delta":
+                        delta = getattr(event, "delta", None)
+                        dtype = getattr(delta, "type", "") or ""
+                        if dtype == "text_delta":
+                            chunk_text = getattr(delta, "text", "")
+                            full_text += chunk_text
+                            # Enviar pulso continuo para mantener el proxy activo y actualizar progreso
+                            if len(full_text) % 800 < len(chunk_text) + 2:
+                                yield f"data: {json.dumps({'type':'writing','message':f'Redactando newsletter con Claude ({len(full_text)} caracteres)...'})}\n\n"
+                        elif dtype == "input_json_delta":
+                            current_tool_input += getattr(delta, "partial_json", "")
+
+                    elif etype == "content_block_stop":
+                        if current_block_type == "tool_use" and current_tool_input:
+                            try:
+                                ti = json.loads(current_tool_input)
+                                q = ti.get("query", "")
+                                if q:
+                                    search_queries.append(q)
+                            except Exception:
+                                pass
+                        current_block_type = ""
+                        current_tool_input = ""
+
+            # Extraer JSON final del newsletter
+            newsletter = extract_json(full_text)
+            titulo = newsletter.get("titulo", name)
+
+            yield f"data: {json.dumps({'type':'status','message':'Formateando newsletter para WhatsApp...'})}\n\n"
+            whatsapp_text = render_whatsapp_text(newsletter)
+
+            # Envío vía WhatsApp
+            whatsapp_id = ""
+            whatsapp_error = ""
+            if target:
+                yield f"data: {json.dumps({'type':'status','message':f'Enviando mensaje a {target} vía WhatsApp...'})}\n\n"
+                try:
+                    res = send_whatsapp_text(target, whatsapp_text)
+                    if res.get("success"):
+                        whatsapp_id = res.get("id", "")
+                    else:
+                        whatsapp_error = res.get("error", "Error desconocido enviando por WhatsApp")
+                except Exception as we:
+                    whatsapp_error = str(we)
+            else:
+                whatsapp_error = "No hay número de WhatsApp configurado"
+
+            # Guardar reporte en Supabase
+            report_id = None
+            try:
+                rep = supabase_client.table("reports").insert({
+                    "titulo":         titulo,
+                    "origen":         "programado",
+                    "config":         config,
+                    "newsletter":     newsletter,
+                    "search_queries": search_queries,
+                }).execute()
+                if rep.data:
+                    report_id = rep.data[0]["id"]
+            except Exception as se:
+                print(f"[run_now] Error guardando reporte: {se}")
+
+            # Actualizar last_run y next_run
+            try:
+                next_run = _calc_next_run(cron)
+                now_iso  = datetime.datetime.utcnow().isoformat() + "Z"
+                supabase_client.table("schedules").update({
+                    "last_run": now_iso,
+                    "next_run": next_run,
+                }).eq("id", schedule_id).execute()
+            except Exception as ce:
+                print(f"[run_now] Error actualizando next_run: {ce}")
+
+            yield f"data: {json.dumps({'type':'done','ok':True,'report_id':report_id,'whatsapp_id':whatsapp_id,'whatsapp_error':whatsapp_error,'titulo':titulo})}\n\n"
+
         except Exception as e:
-            whatsapp_error = str(e)
-            print(f"[run_now] Excepción enviando WhatsApp: {e}")
-    else:
-        whatsapp_error = "No hay número de WhatsApp configurado"
+            print(f"[run_now] Excepción: {e}")
+            yield f"data: {json.dumps({'type':'error','error':str(e)})}\n\n"
 
-    # Guardar reporte
-    report_id = None
-    try:
-        rep = supabase_client.table("reports").insert({
-            "titulo":         titulo,
-            "origen":         "programado",
-            "config":         config,
-            "newsletter":     newsletter,
-            "search_queries": queries,
-        }).execute()
-        if rep.data:
-            report_id = rep.data[0]["id"]
-    except Exception as e:
-        print(f"[run_now] Error guardando reporte: {e}")
-
-    # Actualizar next_run
-    try:
-        next_run = _calc_next_run(cron)
-        now_iso  = datetime.datetime.utcnow().isoformat() + "Z"
-        supabase_client.table("schedules").update({
-            "last_run": now_iso,
-            "next_run": next_run,
-        }).eq("id", schedule_id).execute()
-    except Exception as e:
-        print(f"[run_now] Error actualizando next_run: {e}")
-
-    return {
-        "ok":             True,
-        "report_id":      report_id,
-        "whatsapp_id":    whatsapp_id,
-        "whatsapp_error": whatsapp_error,
-        "titulo":         titulo,
-    }
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 # ─── WhatsApp status endpoint ──────────────────────────────────────────────────
