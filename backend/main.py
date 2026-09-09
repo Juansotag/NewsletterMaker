@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
-import openai
+import anthropic
 from supabase import create_client
 try:
     from croniter import croniter as _croniter
@@ -28,24 +28,23 @@ except ImportError:
 from backend.email_render import render_email_html
 from backend.whatsapp_render import render_whatsapp_text
 from backend.whatsapp_client import send_whatsapp_text, check_whatsapp_status, normalize_whatsapp_number
-from backend.web_search import perform_web_search, format_search_results_for_llm
 
 app = FastAPI(title="Newsletter Ejecutivo GovLab")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# ─── Clientes OpenAI ──────────────────────────────────────────────────────────
+# ─── Cliente Anthropic (Claude) ────────────────────────────────────────────────
 def resolve_api_key(x_api_key: str = "") -> str:
-    env_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    env_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if env_key:
         return env_key
-    if x_api_key and not x_api_key.startswith("sk-ant-"):
+    if x_api_key and not x_api_key.startswith("sk-proj-"):
         return x_api_key.strip()
     return ""
 
-def get_openai_client(api_key: str = "") -> openai.AsyncOpenAI:
+def get_anthropic_client(api_key: str = "") -> anthropic.AsyncAnthropic:
     key = resolve_api_key(api_key)
-    return openai.AsyncOpenAI(api_key=key)
+    return anthropic.AsyncAnthropic(api_key=key)
 
 # ─── Cliente Supabase ─────────────────────────────────────────────────────────
 _supabase_url = os.environ.get("SUPABASE_URL", "")
@@ -272,27 +271,9 @@ def build_system_prompt_db(ctx: str) -> str:
 
 
 # ─── Modelos válidos (whitelist) ─────────────────────────────────────────────
-VALID_MODELS = {"gpt-4o", "gpt-4o-mini", "o3-mini", "o1-mini", "claude-sonnet-4-6"}
-VALID_ASSIST_MODELS = {"gpt-4o", "gpt-4o-mini", "o3-mini", "o1-mini"}
-DEFAULT_MODEL = "gpt-4o"
-
-WEB_SEARCH_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "web_search",
-        "description": "Busca noticias, convocatorias, datos y artículos recientes en internet para el boletín ejecutivo.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Término de búsqueda optimizado para encontrar noticias o información reciente"
-                }
-            },
-            "required": ["query"]
-        }
-    }
-}
+VALID_MODELS = {"claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-opus-4-6"}
+VALID_ASSIST_MODELS = {"claude-haiku-4-5-20251001", "claude-sonnet-4-6"}
+DEFAULT_MODEL = "claude-sonnet-4-6"
 
 
 # ─── Modelos ───────────────────────────────────────────────────────────────────
@@ -303,7 +284,7 @@ class Config(BaseModel):
     num_items: int = 4
     audiencia: str = "Juan Carlos Camelo"
     notas: str = ""
-    model: str = "gpt-4o"
+    model: str = "claude-sonnet-4-6"
     buscar_web: bool = True
     usar_contexto: bool = True
 
@@ -327,7 +308,7 @@ class AssistRequest(BaseModel):
     name: str
     content: str
     instruction: str
-    model: str = "gpt-4o"
+    model: str = "claude-haiku-4-5-20251001"
 
 
 class ScheduleCreate(BaseModel):
@@ -502,10 +483,10 @@ async def generate_stream(cfg: Config, x_api_key: str = Header(default="")):
     api_key = resolve_api_key(x_api_key)
     if not api_key:
         async def _err():
-            yield f"data: {json.dumps({'type':'error','message':'Falta la clave API de OpenAI. Configura OPENAI_API_KEY en las variables de entorno de tu servidor o archivo .env.'})}\n\n"
+            yield f"data: {json.dumps({'type':'error','message':'Falta la clave API de Anthropic (Claude). Configura ANTHROPIC_API_KEY en las variables de entorno de tu servidor o archivo .env.'})}\n\n"
         return StreamingResponse(_err(), media_type="text/event-stream")
 
-    client = get_openai_client(api_key)
+    client = get_anthropic_client(api_key)
 
     # Cargar contexto y prompt del sistema dinámicamente desde Supabase
     if cfg.usar_contexto:
@@ -514,103 +495,59 @@ async def generate_stream(cfg: Config, x_api_key: str = Header(default="")):
         context_docs = "No se incluye contexto institucional. Genera el boletín basándote únicamente en la información provista en las notas del usuario."
         
     system_prompt = build_system_prompt_db(context_docs)
+    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 10}] if cfg.buscar_web else []
 
     async def event_generator():
         try:
-            full_text      = ""
-            search_count   = 0
-            search_queries = []
+            full_text          = ""
+            search_count       = 0
+            search_queries     = []
+            current_block_type = ""
+            current_tool_input = ""
 
-            # Mapeo de modelo: siempre asegurar el mejor modelo de OpenAI (gpt-4o)
-            model = cfg.model if cfg.model in VALID_MODELS else "gpt-4o"
-            if "claude" in model.lower():
-                model = "gpt-4o"
+            model = cfg.model if cfg.model in VALID_MODELS else "claude-sonnet-4-6"
 
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": build_user_message(cfg)}
-            ]
-
-            tools = [WEB_SEARCH_TOOL] if cfg.buscar_web else None
-
-            # 1. Ronda interactiva de búsqueda web
-            max_search_rounds = 4
-            round_idx = 0
-
-            while cfg.buscar_web and round_idx < max_search_rounds:
-                round_idx += 1
-                completion = await client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice="auto",
-                    temperature=0.4,
-                )
-                msg = completion.choices[0].message
-                tool_calls = getattr(msg, "tool_calls", None)
-
-                if not tool_calls:
-                    # El modelo consideró que no necesita más búsquedas
-                    break
-
-                messages.append(msg)
-
-                for tc in tool_calls:
-                    if tc.function.name == "web_search":
-                        search_count += 1
-                        yield f"data: {json.dumps({'type':'searching','count':search_count})}\n\n"
-
-                        try:
-                            args = json.loads(tc.function.arguments)
-                            q = args.get("query", "")
-                        except Exception:
-                            q = tc.function.arguments or ""
-
-                        if q:
-                            search_queries.append(q)
-                            yield f"data: {json.dumps({'type':'search_query','query':q})}\n\n"
-                            raw_results = perform_web_search(q, max_results=5)
-                            content_str = format_search_results_for_llm(raw_results)
-                        else:
-                            content_str = "No se proporcionó término de búsqueda."
-
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": content_str
-                        })
-
-            # Instrucción final para asegurar la redacción completa de todas las secciones
-            num_req = max(1, min(20, cfg.num_items))
-            messages.append({
-                "role": "user",
-                "content": (
-                    "Con los datos recopilados en las búsquedas y el contexto institucional, "
-                    "redacta AHORA el boletín ejecutivo COMPLETO en formato JSON según la estructura obligatoria. "
-                    f"Asegúrate de incluir las 2-4 cifras destacadas del sector en 'cifras' (con dato, contexto, fuente y url), "
-                    f"exactamente {num_req} noticias principales ampliamente desarrolladas con 'por_que_importa' en 'items', "
-                    "y las 2-4 oportunidades accionables en 'oportunidades' (con fecha de cierre y url)."
-                )
-            })
-
-            # 2. Generación en streaming del texto estructurado del newsletter
-            stream = await client.chat.completions.create(
+            async with client.messages.stream(
                 model=model,
-                messages=messages,
-                response_format={"type": "json_object"},
-                stream=True,
-                temperature=0.7,
-            )
+                max_tokens=8192,
+                system=system_prompt,
+                tools=tools,
+                messages=[{"role": "user", "content": build_user_message(cfg)}],
+            ) as stream:
+                async for event in stream:
+                    etype = getattr(event, "type", "") or ""
 
-            async for chunk in stream:
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                if delta and delta.content:
-                    full_text += delta.content
-                    yield f"data: {json.dumps({'type':'text_chunk','total':len(full_text)})}\n\n"
+                    if etype == "content_block_start":
+                        block = getattr(event, "content_block", None)
+                        current_block_type = getattr(block, "type", "") or ""
+                        current_tool_input = ""
+                        if current_block_type == "tool_use":
+                            search_count += 1
+                            yield f"data: {json.dumps({'type':'searching','count':search_count})}\n\n"
 
-            # 3. Parsear JSON final y guardar reporte
+                    elif etype == "content_block_delta":
+                        delta = getattr(event, "delta", None)
+                        dtype = getattr(delta, "type", "") or ""
+                        if dtype == "text_delta":
+                            full_text += getattr(delta, "text", "")
+                            yield f"data: {json.dumps({'type':'text_chunk','total':len(full_text)})}\n\n"
+                        elif dtype == "input_json_delta":
+                            current_tool_input += getattr(delta, "partial_json", "")
+
+                    elif etype == "content_block_stop":
+                        if current_block_type == "tool_use" and current_tool_input:
+                            try:
+                                ti = json.loads(current_tool_input)
+                                q  = ti.get("query", "")
+                                if q:
+                                    search_queries.append(q)
+                                    yield f"data: {json.dumps({'type':'search_query','query':q})}\n\n"
+                            except Exception:
+                                pass
+                        current_block_type = ""
+                        current_tool_input = ""
+
+            # Parsear JSON final y guardar reporte
             try:
                 data = extract_json(full_text)
                 report_id = None
@@ -645,11 +582,11 @@ async def generate_stream(cfg: Config, x_api_key: str = Header(default="")):
 # ─── Config status endpoint ────────────────────────────────────────────────────
 @app.get("/api/config/status")
 def get_config_status():
-    has_key = bool(os.environ.get("OPENAI_API_KEY", ""))
+    has_key = bool(os.environ.get("ANTHROPIC_API_KEY", ""))
     return {
         "has_api_key": has_key,
-        "provider": "OpenAI",
-        "default_model": "gpt-4o"
+        "provider": "Anthropic (Claude)",
+        "default_model": "claude-sonnet-4-6"
     }
 
 
@@ -923,7 +860,7 @@ async def run_schedule_now(schedule_id: str, x_api_key: str = Header(default="")
 
     api_key = resolve_api_key(x_api_key)
     if not api_key:
-        raise HTTPException(status_code=400, detail="Falta la clave API de OpenAI (OPENAI_API_KEY en variables de entorno)")
+        raise HTTPException(status_code=400, detail="Falta la clave API de Anthropic (ANTHROPIC_API_KEY en variables de entorno)")
 
     config  = sched.get("config", {})
     target  = sched.get("whatsapp_to") or sched.get("email_to", "")
@@ -1003,9 +940,9 @@ def get_whatsapp_status():
 async def assist_doc(body: AssistRequest, x_api_key: str = Header(default="")):
     api_key = resolve_api_key(x_api_key)
     if not api_key:
-        raise HTTPException(status_code=400, detail="Falta la clave API de OpenAI (OPENAI_API_KEY en variables de entorno)")
+        raise HTTPException(status_code=400, detail="Falta la clave API de Anthropic (ANTHROPIC_API_KEY en variables de entorno)")
         
-    client = get_openai_client(api_key)
+    client = get_anthropic_client(api_key)
     
     system_prompt = (
         "Eres un asistente experto de inteligencia artificial del GovLab.\n"
@@ -1015,7 +952,7 @@ async def assist_doc(body: AssistRequest, x_api_key: str = Header(default="")):
         "1. 'response': Tu respuesta explicativa o de revisión de seguridad para el usuario. Debe ser en español, formal y ejecutivo, SIN EMOJIS.\n"
         "Si el usuario pide validar si los cambios están bien, analiza de manera crítica el contenido.\n"
         "Si el documento es '00_sistema_instrucciones.md' y detectas que la estructura JSON de la salida fue alterada de tal forma que no cumpla con las especificaciones obligatorias, advierte claramente en 'response' que esa modificación dañará el funcionamiento y parser del newsletter, y NO modifiques el contenido.\n"
-        "La estructura obligatoria del JSON del newsletter es:\n"
+        "La estructura obligatoria del JSON que Claude debe retornar en el newsletter es:\n"
         "{\n"
         "  \"titulo\": \"...\",\n"
         "  \"fecha\": \"YYYY-MM-DD\",\n"
@@ -1025,7 +962,7 @@ async def assist_doc(body: AssistRequest, x_api_key: str = Header(default="")):
         "  \"oportunidades\": [{\"texto\": \"...\", \"fuente\": \"...\", \"url\": \"...\"}]\n"
         "}\n"
         "2. 'modified_content': Si la instrucción solicita cambios, mejoras, traducciones o agregar información, devuelve aquí el contenido del documento completamente actualizado. Si es una pregunta de revisión o no requiere cambios, devuelve el contenido original tal cual.\n\n"
-        "Devuelve exclusivamente un objeto JSON válido con las claves 'response' y 'modified_content'."
+        "Devuelve exclusivamente el JSON válido, sin textos adicionales, prefijos ni marcas de código."
     )
     
     user_message = (
@@ -1035,21 +972,15 @@ async def assist_doc(body: AssistRequest, x_api_key: str = Header(default="")):
     )
     
     try:
-        assist_model = body.model if body.model in VALID_ASSIST_MODELS else "gpt-4o"
-        if "claude" in assist_model.lower():
-            assist_model = "gpt-4o"
-
-        completion = await client.chat.completions.create(
+        assist_model = body.model if body.model in VALID_ASSIST_MODELS else "claude-haiku-4-5-20251001"
+        message = await client.messages.create(
             model=assist_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.3
+            max_tokens=4000,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_message}]
         )
         
-        text = completion.choices[0].message.content or "{}"
+        text = message.content[0].text
         data = extract_json(text)
         
         response_text = data.get("response", "")
@@ -1058,7 +989,7 @@ async def assist_doc(body: AssistRequest, x_api_key: str = Header(default="")):
         return AssistResponse(response=response_text, modified_content=modified_content)
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al conectar con OpenAI: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error al conectar con Claude: {str(e)}")
 
 
 # ─── Frontend estático ─────────────────────────────────────────────────────────

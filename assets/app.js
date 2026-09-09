@@ -69,7 +69,7 @@ function getConfig() {
 // ══════════════════════════════════════════════════════
 async function generar() {
   const cfg = getConfig();
-  cfg.model = localStorage.getItem('openai_model_generation') || 'gpt-4o';
+  cfg.model = localStorage.getItem('claude_model_generation') || 'claude-sonnet-4-6';
   const btn = document.getElementById('generar');
   const label = document.getElementById('btnLabel');
 
@@ -78,7 +78,7 @@ async function generar() {
   showLiveLog();
 
   try {
-    label.innerHTML = '<span class="spinner"></span> Buscando y redactando con GPT-4o…';
+    label.innerHTML = '<span class="spinner"></span> Buscando y redactando con Claude Sonnet…';
 
     const response = await fetch('/api/generate/stream', {
       method: 'POST',
@@ -1390,10 +1390,10 @@ async function checkServerKeyStatus() {
     if (response.ok) {
       const data = await response.json();
       if (data.has_api_key) {
-        serverStatusEl.textContent = 'Configurada en el servidor (OPENAI_API_KEY) ✓';
+        serverStatusEl.textContent = 'Configurada en el servidor (ANTHROPIC_API_KEY) ✓';
         serverStatusEl.style.color = 'var(--c-green)';
       } else {
-        serverStatusEl.textContent = 'Sin configurar en el servidor (Falta OPENAI_API_KEY)';
+        serverStatusEl.textContent = 'Sin configurar en el servidor (Falta ANTHROPIC_API_KEY)';
         serverStatusEl.style.color = 'var(--c-red)';
       }
     } else {
@@ -1431,14 +1431,14 @@ async function checkWhatsAppStatus() {
       } else {
         sesEl.textContent = 'Pendiente de escanear QR';
         sesEl.style.color = 'var(--c-yellow)';
-        if (helpEl) helpEl.textContent = 'El servidor Open-Wa está corriendo pero requiere vincular tu WhatsApp escaneando el código QR en la consola de Open-Wa.';
+        if (helpEl) helpEl.textContent = 'El servidor de WhatsApp está corriendo pero requiere vincular tu WhatsApp escaneando el código QR en la consola de WhatsApp.';
       }
     } else {
       srvEl.textContent = `Desconectado (${data.url})`;
       srvEl.style.color = 'var(--c-red)';
       sesEl.textContent = 'No disponible';
       sesEl.style.color = 'var(--text-muted)';
-      if (helpEl) helpEl.textContent = 'Para activar el envío por WhatsApp, inicia el servicio Open-Wa o configura la variable OPENWA_API_URL en tu servidor.';
+      if (helpEl) helpEl.textContent = 'Para activar el envío por WhatsApp, verifica la configuración de EVOLUTION_API_URL o OPENWA_API_URL en tu servidor.';
     }
   } catch (e) {
     srvEl.textContent = 'Error al consultar';
@@ -1448,8 +1448,8 @@ async function checkWhatsAppStatus() {
 }
 
 function loadConfigTab() {
-  const modelGen = localStorage.getItem('openai_model_generation') || 'gpt-4o';
-  const modelAssist = localStorage.getItem('openai_model_assist') || 'gpt-4o';
+  const modelGen = localStorage.getItem('claude_model_generation') || 'claude-sonnet-4-6';
+  const modelAssist = localStorage.getItem('claude_model_assist') || 'claude-haiku-4-5-20251001';
 
   const genSelect = document.getElementById('modelGenSelect');
   const assistSelect = document.getElementById('modelAssistSelect');
@@ -1466,10 +1466,10 @@ function saveConfig() {
   const assistSelect = document.getElementById('modelAssistSelect');
 
   if (genSelect) {
-    localStorage.setItem('openai_model_generation', genSelect.value);
+    localStorage.setItem('claude_model_generation', genSelect.value);
   }
   if (assistSelect) {
-    localStorage.setItem('openai_model_assist', assistSelect.value);
+    localStorage.setItem('claude_model_assist', assistSelect.value);
   }
 
   const badge = document.getElementById('configSavedBadge');
@@ -1481,13 +1481,15 @@ function saveConfig() {
 }
 
 function clearConfig() {
+  localStorage.removeItem('claude_model_generation');
+  localStorage.removeItem('claude_model_assist');
   localStorage.removeItem('openai_model_generation');
   localStorage.removeItem('openai_model_assist');
 
   const genSelect = document.getElementById('modelGenSelect');
   const assistSelect = document.getElementById('modelAssistSelect');
-  if (genSelect) genSelect.value = 'gpt-4o';
-  if (assistSelect) assistSelect.value = 'gpt-4o';
+  if (genSelect) genSelect.value = 'claude-sonnet-4-6';
+  if (assistSelect) assistSelect.value = 'claude-haiku-4-5-20251001';
 
   const badge = document.getElementById('configSavedBadge');
   if (badge) {

@@ -39,21 +39,19 @@ _resend_key    = os.environ.get("RESEND_API_KEY", "")
 _from_email    = os.environ.get("RESEND_FROM_EMAIL", "onboarding@resend.dev")
 
 
-# ── Generación con OpenAI (GPT-4o) ─────────────────────────────────────────────
+# ── Generación con Claude (Anthropic) ──────────────────────────────────────────
 async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str]]:
     """
-    Genera el newsletter completo usando OpenAI GPT-4o con búsqueda web.
+    Genera el newsletter completo usando Claude con búsqueda web nativa.
     Retorna (newsletter_json, search_queries).
     """
-    import openai
-    from backend.web_search import perform_web_search, format_search_results_for_llm
-    from backend.main import WEB_SEARCH_TOOL
+    import anthropic
 
-    key = api_key or os.environ.get("OPENAI_API_KEY", "")
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
     if not key:
-        raise ValueError("OPENAI_API_KEY no configurada")
+        raise ValueError("ANTHROPIC_API_KEY no configurada en variables de entorno")
 
-    client = openai.AsyncOpenAI(api_key=key)
+    client = anthropic.AsyncAnthropic(api_key=key)
 
     # System prompt
     sp_template = DEFAULT_SYSTEM_PROMPT_TEMPLATE
@@ -90,83 +88,56 @@ async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str
     system_prompt = sp_template.replace("{ctx}", ctx_text or "Universidad de La Sabana — Dirección General de Proyección Social y Co-Creación")
     user_msg = build_user_message(config)
 
-    model = config.get("model", "gpt-4o")
-    if "claude" in model.lower():
-        model = "gpt-4o"
+    VALID = {"claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-opus-4-6"}
+    model = config.get("model", "claude-sonnet-4-6")
+    if model not in VALID:
+        model = "claude-sonnet-4-6"
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_msg}
-    ]
+    tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 10}] if config.get("buscar_web", True) else []
 
-    tools = [WEB_SEARCH_TOOL] if config.get("buscar_web", True) else None
+    full_text      = ""
     search_queries: list[str] = []
+    block_type     = ""
+    tool_input     = ""
 
-    # Ronda de búsqueda web si está activada
-    max_search_rounds = 4
-    round_idx = 0
-
-    while config.get("buscar_web", True) and round_idx < max_search_rounds:
-        round_idx += 1
-        completion = await client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            temperature=0.4,
-        )
-        msg = completion.choices[0].message
-        tool_calls = getattr(msg, "tool_calls", None)
-
-        if not tool_calls:
-            break
-
-        messages.append(msg)
-
-        for tc in tool_calls:
-            if tc.function.name == "web_search":
-                try:
-                    args = json.loads(tc.function.arguments)
-                    q = args.get("query", "")
-                except Exception:
-                    q = tc.function.arguments or ""
-
-                if q:
-                    search_queries.append(q)
-                    raw_results = perform_web_search(q, max_results=5)
-                    content_str = format_search_results_for_llm(raw_results)
-                else:
-                    content_str = "No se proporcionó término de búsqueda."
-
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": content_str
-                })
-
-    # Instrucción final para redacción completa
-    num_req = config.get("num_items", 4)
-    messages.append({
-        "role": "user",
-        "content": (
-            "Con los datos recopilados en las búsquedas y el contexto institucional, "
-            "redacta AHORA el boletín ejecutivo COMPLETO en formato JSON según la estructura obligatoria. "
-            f"Asegúrate de incluir las 2-4 cifras destacadas del sector en 'cifras' (con dato, contexto, fuente y url), "
-            f"exactamente {num_req} noticias principales ampliamente desarrolladas con 'por_que_importa' en 'items', "
-            "y las 2-4 oportunidades accionables en 'oportunidades' (con fecha de cierre y url)."
-        )
-    })
-
-    # Generación final estructurada
-    final_resp = await client.chat.completions.create(
+    async with client.messages.stream(
         model=model,
-        messages=messages,
-        response_format={"type": "json_object"},
-        temperature=0.4,
-    )
-    full_text = final_resp.choices[0].message.content or "{}"
+        max_tokens=8192,
+        system=system_prompt,
+        tools=tools,
+        messages=[{"role": "user", "content": user_msg}],
+    ) as stream:
+        async for event in stream:
+            etype = getattr(event, "type", "") or ""
+
+            if etype == "content_block_start":
+                block = getattr(event, "content_block", None)
+                block_type = getattr(block, "type", "") or ""
+                tool_input = ""
+
+            elif etype == "content_block_delta":
+                delta = getattr(event, "delta", None)
+                dtype = getattr(delta, "type", "") or ""
+                if dtype == "text_delta":
+                    full_text += getattr(delta, "text", "")
+                elif dtype == "input_json_delta":
+                    tool_input += getattr(delta, "partial_json", "")
+
+            elif etype == "content_block_stop":
+                if block_type == "tool_use" and tool_input:
+                    try:
+                        ti = json.loads(tool_input)
+                        q  = ti.get("query", "")
+                        if q:
+                            search_queries.append(q)
+                    except Exception:
+                        pass
+                block_type = ""
+                tool_input = ""
+
     newsletter_json = extract_json(full_text)
     return newsletter_json, search_queries
+
 
 
 # ── Envío de email vía Resend ─────────────────────────────────────────────────
