@@ -227,8 +227,53 @@ async function sendNowToWhatsApp() {
 
 const generar = sendNowToWhatsApp;
 
+let _currentRightView = 'schedules';
+
+function showRightView(view) {
+  _currentRightView = view;
+  const sView = document.getElementById('schedulesView');
+  const dView = document.getElementById('dispatchView');
+  const btnToggle = document.getElementById('btnToggleDispatchView');
+  const reloadBtn = document.getElementById('btnReloadSchedules');
+  const titleEl = document.getElementById('rightCardTitle');
+  const subEl = document.getElementById('rightCardSubtitle');
+
+  if (view === 'dispatch') {
+    if (sView) sView.style.display = 'none';
+    if (dView) dView.style.display = 'block';
+    if (reloadBtn) reloadBtn.style.display = 'none';
+    if (btnToggle) {
+      btnToggle.style.display = 'inline-block';
+      btnToggle.textContent = '← Ver Programaciones';
+    }
+    if (titleEl) titleEl.textContent = 'Monitor de Despacho y Envío';
+    if (subEl) subEl.textContent = 'Seguimiento en vivo y resultado del boletín enviado por WhatsApp.';
+  } else {
+    if (sView) sView.style.display = 'block';
+    if (dView) dView.style.display = 'none';
+    if (reloadBtn) reloadBtn.style.display = 'inline-block';
+    if (btnToggle) {
+      btnToggle.style.display = _lastGeneratedNewsletter ? 'inline-block' : 'none';
+      btnToggle.textContent = 'Ver Último Envío →';
+    }
+    if (titleEl) titleEl.textContent = 'Programaciones Activas de Envío';
+    if (subEl) subEl.textContent = 'Envíos automáticos por WhatsApp configurados para la Dirección General.';
+  }
+}
+
+function toggleRightView() {
+  if (_currentRightView === 'schedules') {
+    showRightView('dispatch');
+  } else {
+    showRightView('schedules');
+  }
+}
+
 function showLiveLog() {
-  document.getElementById('output').innerHTML = `
+  showRightView('dispatch');
+  const out = document.getElementById('output');
+  if (!out) return;
+  out.innerHTML = `
 <div class="live-log">
   <div class="log-header">
     <span class="log-pulse"></span>
@@ -250,24 +295,21 @@ function addLog(html, cls = '') {
 }
 
 function showError(msg) {
-  document.getElementById('output').innerHTML = `
+  showRightView('dispatch');
+  const out = document.getElementById('output');
+  if (!out) return;
+  out.innerHTML = `
 <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:260px;gap:1rem;padding:2rem;text-align:center;">
   <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#d51437" stroke-width="1.5">
     <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
   </svg>
   <p style="color:#d51437;font-weight:600;margin:0;max-width:380px;">${esc(msg)}</p>
-  <button class="btn-ghost" onclick="resetOutput()">Volver</button>
+  <button class="btn-ghost" onclick="resetOutput()">Volver a Programaciones</button>
 </div>`;
 }
 
 function resetOutput() {
-  document.getElementById('output').innerHTML = `
-<div class="empty" id="emptyState">
-  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-    <path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/>
-  </svg>
-  <div>Tu newsletter aparecerá aquí.<br>Configura a la izquierda y pulsa <b>Generar</b>.</div>
-</div>`;
+  showRightView('schedules');
 }
 
 function formatUrl(url) {
@@ -284,7 +326,9 @@ function formatUrl(url) {
 // RENDER NEWSLETTER
 // ══════════════════════════════════════════════════════
 function renderNewsletter(d) {
+  showRightView('dispatch');
   const out = document.getElementById('output');
+  if (!out) return;
 
   // Cifras
   let cifrasHtml = '';
@@ -1197,6 +1241,7 @@ function loadScheduleIntoEditor(id) {
     });
   }
 
+  showRightView('schedules');
   const configPanel = document.getElementById('configPanel');
   if (configPanel) configPanel.scrollIntoView({ behavior: 'smooth' });
 
@@ -1255,7 +1300,7 @@ async function createScheduleFromUnifiedForm() {
       statusEl.textContent = 'Programación guardada exitosamente en el servidor.';
     }
     await loadSchedules();
-    document.getElementById('scheduleList')?.scrollIntoView({ behavior: 'smooth' });
+    showRightView('schedules');
     setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
   } catch (e) {
     if (statusEl) {

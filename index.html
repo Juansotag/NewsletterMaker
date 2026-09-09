@@ -176,40 +176,38 @@
           </div>
         </section>
 
-        <!-- MONITOR DE DESPACHO Y RESULTADOS -->
-        <section class="card" id="output">
-          <div class="empty" id="emptyState">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <circle cx="12" cy="12" r="10"></circle>
-              <polyline points="12 6 12 12 16 14"></polyline>
-              <path d="M22 2L11 13"></path>
-              <path d="M22 2l-7 20-4-9-9-4 20-7z"></path>
-            </svg>
+        <!-- PANEL DERECHO: PROGRAMACIONES ACTIVAS DE ENVÍO Y MONITOR -->
+        <section class="card" id="rightPanel" style="min-height: 550px;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem;">
             <div>
-              <b style="font-size:.95rem;color:var(--c-blue-dark);">Monitor de Envío y Despacho</b><br>
-              <span style="color:var(--text-muted);font-size:.84rem;display:inline-block;margin-top:.25rem;">
-                Pulsa <b>Programar Envío Recurrente</b> para automatizar la entrega periódica, o <b>Enviar Ahora a WhatsApp</b> para despachar un boletín de inmediato.
-              </span>
+              <h2 id="rightCardTitle" style="margin:0;font-size:1.15rem;color:var(--c-blue-dark);">Programaciones Activas de Envío</h2>
+              <p id="rightCardSubtitle" style="margin:0.2rem 0 0;font-size:0.8rem;color:var(--text-muted);">
+                Envíos automáticos por WhatsApp configurados para la Dirección General.
+              </p>
             </div>
+            <div style="display:flex;gap:.4rem;align-items:center;">
+              <button class="btn-ghost" id="btnToggleDispatchView" onclick="toggleRightView()" style="display:none;font-size:.78rem;padding:.35rem .75rem;">
+                Ver Programaciones
+              </button>
+              <button class="btn-ghost" id="btnReloadSchedules" onclick="loadSchedules()" style="font-size:.78rem;padding:.35rem .75rem;" title="Recargar programaciones">
+                Recargar
+              </button>
+            </div>
+          </div>
+
+          <!-- VISTA DE PROGRAMACIONES ACTIVAS (Visible por defecto) -->
+          <div id="schedulesView">
+            <div id="scheduleList">
+              <p style="color:var(--text-muted);font-size:.85rem;">Cargando programaciones…</p>
+            </div>
+          </div>
+
+          <!-- VISTA DE MONITOR Y DESPACHO (Se activa al enviar) -->
+          <div id="dispatchView" style="display:none;">
+            <div id="output"></div>
           </div>
         </section>
       </div>
-
-      <!-- PROGRAMACIONES ACTIVAS UNIFICADAS -->
-      <section class="card" style="margin-top: 1.5rem; padding: 1.25rem;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem;">
-          <div>
-            <h2 style="margin:0;font-size:1.1rem;color:var(--c-blue-dark);">Programaciones Activas de Envío</h2>
-            <p style="margin:0.2rem 0 0;font-size:0.8rem;color:var(--text-muted);">
-              Envíos automáticos por WhatsApp configurados para la Dirección General.
-            </p>
-          </div>
-          <button class="btn-ghost" onclick="loadSchedules()" style="font-size:.78rem;padding:.35rem .75rem;" title="Recargar programaciones">Recargar</button>
-        </div>
-        <div id="scheduleList">
-          <p style="color:var(--text-muted);font-size:.85rem;">Cargando programaciones…</p>
-        </div>
-      </section>
     </main>
   </div>
 
