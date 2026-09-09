@@ -280,12 +280,14 @@ def generate_newsletter_pdf(newsletter: dict) -> bytes:
                     cell_flow.append(Paragraph(dato, style_cifra_dato))
                 if ctx_c:
                     cell_flow.append(Paragraph(ctx_c, style_cifra_ctx))
+                fecha_pub = _safe_xml(c.get("fecha_publicacion") or "")
+                fuente_txt = f"Fuente: {fuente}" + (f" ({fecha_pub})" if fecha_pub else "")
                 if fuente and url_c:
-                    cell_flow.append(Paragraph(f'<a href="{url_c}"><u>Fuente: {fuente} ↗</u></a>', style_fuente))
+                    cell_flow.append(Paragraph(f'<a href="{url_c}"><u>{fuente_txt} ↗</u></a>', style_fuente))
                 elif url_c:
-                    cell_flow.append(Paragraph(f'<a href="{url_c}"><u>Ver enlace ↗</u></a>', style_fuente))
+                    cell_flow.append(Paragraph(f'<a href="{url_c}"><u>Ver enlace {f"({fecha_pub}) " if fecha_pub else ""}↗</u></a>', style_fuente))
                 elif fuente:
-                    cell_flow.append(Paragraph(f"<i>Fuente: {fuente}</i>", style_fuente))
+                    cell_flow.append(Paragraph(f"<i>{fuente_txt}</i>", style_fuente))
                 cell_content = cell_flow
             else:
                 continue
@@ -360,12 +362,14 @@ def generate_newsletter_pdf(newsletter: dict) -> bytes:
                 item_elements.append(Spacer(1, 4))
 
             # Enlace de fuente
+            fecha_pub = _safe_xml(it.get("fecha_publicacion") or "")
+            fuente_txt = f"🔗 Fuente: {fuente_i}" + (f" ({fecha_pub})" if fecha_pub else "")
             if fuente_i and url_i:
-                item_elements.append(Paragraph(f'<a href="{url_i}"><u>🔗 Fuente: {fuente_i} ({url_i}) ↗</u></a>', style_fuente))
+                item_elements.append(Paragraph(f'<a href="{url_i}"><u>{fuente_txt} ({url_i}) ↗</u></a>', style_fuente))
             elif url_i:
-                item_elements.append(Paragraph(f'<a href="{url_i}"><u>🔗 Enlace: {url_i} ↗</u></a>', style_fuente))
+                item_elements.append(Paragraph(f'<a href="{url_i}"><u>🔗 Enlace{f" ({fecha_pub})" if fecha_pub else ""}: {url_i} ↗</u></a>', style_fuente))
             elif fuente_i:
-                item_elements.append(Paragraph(f"<i>Fuente: {fuente_i}</i>", style_fuente))
+                item_elements.append(Paragraph(f"<i>{fuente_txt}</i>", style_fuente))
 
             # Envolver el ítem completo en una tarjeta
             card_item = Table(

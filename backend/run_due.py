@@ -23,7 +23,7 @@ from backend.email_render import render_email_html
 from backend.whatsapp_render import render_whatsapp_text
 from backend.whatsapp_client import send_whatsapp_text, send_whatsapp_document
 from backend.pdf_generator import generate_newsletter_pdf
-from backend.main import resolve_doc_references, extract_json, build_user_message, DEFAULT_SYSTEM_PROMPT_TEMPLATE
+from backend.main import resolve_doc_references, extract_json, build_user_message, DEFAULT_SYSTEM_PROMPT_TEMPLATE, sanitize_newsletter_dates
 
 
 # ── Clientes ──────────────────────────────────────────────────────────────────
@@ -137,6 +137,10 @@ async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str
                 tool_input = ""
 
     newsletter_json = extract_json(full_text)
+    hoy_rd = datetime.date.today()
+    p_dias = config.get("periodo_dias") or 7 if isinstance(config, dict) else 7
+    f_desde_rd = hoy_rd - datetime.timedelta(days=p_dias)
+    newsletter_json = sanitize_newsletter_dates(newsletter_json, f_desde_rd, hoy_rd)
     return newsletter_json, search_queries
 
 

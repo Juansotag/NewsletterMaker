@@ -71,16 +71,19 @@ def render_whatsapp_text(newsletter: dict) -> str:
             fuente = clean_text(c.get("fuente") or c.get("medio") or "")
             url_c  = clean_url(c.get("url") or c.get("link") or "")
 
+            fecha_pub = clean_text(c.get("fecha_publicacion") or "")
+            fuente_label = f"{fuente} · 📅 {fecha_pub}" if (fuente and fecha_pub) else (fuente or fecha_pub)
+
             if dato:
                 lines.append(f"*{dato}*")
             if ctx_c:
                 lines.append(ctx_c)
-            if fuente and url_c:
-                lines.append(f"🔗 Fuente ({fuente}): {url_c}")
+            if fuente_label and url_c:
+                lines.append(f"🔗 Fuente ({fuente_label}): {url_c}")
             elif url_c:
-                lines.append(f"🔗 Enlace: {url_c}")
-            elif fuente:
-                lines.append(f"Fuente: _{fuente}_")
+                lines.append(f"🔗 Enlace{f' (📅 {fecha_pub})' if fecha_pub else ''}: {url_c}")
+            elif fuente_label:
+                lines.append(f"Fuente: _{fuente_label}_")
             lines.append("")
 
     # ── Ítems Principales por Eje ────────────────────────────────────────────
@@ -94,7 +97,9 @@ def render_whatsapp_text(newsletter: dict) -> str:
             resumen   = clean_text(it.get("resumen") or it.get("contenido") or "")
             pqi       = clean_text(it.get("por_que_importa") or it.get("importancia") or "")
             fuente_i  = clean_text(it.get("fuente") or "")
+            fecha_pub = clean_text(it.get("fecha_publicacion") or "")
             url_i     = clean_url(it.get("url") or it.get("link") or "")
+            fuente_label = f"{fuente_i} · 📅 {fecha_pub}" if (fuente_i and fecha_pub) else (fuente_i or fecha_pub)
 
             if eje:
                 lines.append(f"*{eje}*")
@@ -104,12 +109,12 @@ def render_whatsapp_text(newsletter: dict) -> str:
                 lines.append(resumen)
             if pqi:
                 lines.append(f"*Por qué importa:* {pqi}")
-            if fuente_i and url_i:
-                lines.append(f"🔗 Fuente ({fuente_i}): {url_i}")
+            if fuente_label and url_i:
+                lines.append(f"🔗 Fuente ({fuente_label}): {url_i}")
             elif url_i:
-                lines.append(f"🔗 Enlace: {url_i}")
-            elif fuente_i:
-                lines.append(f"Fuente: _{fuente_i}_")
+                lines.append(f"🔗 Enlace{f' (📅 {fecha_pub})' if fecha_pub else ''}: {url_i}")
+            elif fuente_label:
+                lines.append(f"Fuente: _{fuente_label}_")
 
             lines.append("")  # Separador entre ítems
 

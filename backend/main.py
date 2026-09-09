@@ -208,8 +208,11 @@ QUÉ VIGILAR:
 DÓNDE BUSCAR:
 Medios Colombia (El Tiempo, La República, Portafolio, Semana), entidades (MinEducación, Minciencias, DNP, Innpulsa, CCB), medios internacionales (Times Higher Education, Inside Higher Ed, University World News, MIT Technology Review, OECD, UNESCO IESALC), boletines de IA (The Batch, Import AI) y anuncios de universidades referentes (ASU, MIT, IE; Andes, Javeriana, Nacional, Rosario, EAFIT).
 
-CÓMO FILTRAR:
-Incluye solo lo reciente, accionable y cercano a su ecosistema. Prefiere pocos ítems fuertes a muchos débiles. Descarta tecnología genérica sin ángulo educativo o de sector público, y opinión sin dato.
+CÓMO FILTRAR (RIGOR TEMPORAL ESTRICTO):
+- VIGENCIA OBLIGATORIA: Solo incluye hechos, cifras y noticias publicados dentro de la ventana temporal indicada (últimos días). Tolerancia cero a artículos de meses pasados o inicio de año.
+- DESCARTAR OBSOLETOS: Descarta de inmediato cualquier contenido publicado antes de la fecha inicial del período solicitado. Si la URL o el texto revelan que el artículo es de meses previos (ej. enero a agosto) o de años anteriores, DESCÁRTALO SIN EXCEPCIONES.
+- CONSULTAS CON MES Y AÑO: Toda búsqueda en web_search debe incluir el mes y año actuales para forzar resultados de la semana en curso.
+- REQUISITOS DE CONTENIDO: Prefiere noticias con datos duros, implicaciones de política pública o ecosistema universitario colombiano/iberoamericano. Descarta opinión sin datos y notas genéricas sin contexto educativo.
 
 SALIDA — devuelve EXCLUSIVAMENTE este JSON estructurado válido:
 {
@@ -221,7 +224,8 @@ SALIDA — devuelve EXCLUSIVAMENTE este JSON estructurado válido:
       "dato": "Cifra concreta de las búsquedas: número, %, monto, plazo, ranking",
       "contexto": "Frase sustanciosa que explica qué significa o implica esta cifra para el ecosistema educativo e innovación",
       "fuente": "Nombre del medio o entidad",
-      "url": "https://..."
+      "url": "https://...",
+      "fecha_publicacion": "YYYY-MM-DD"
     }
   ],
   "items": [
@@ -231,22 +235,25 @@ SALIDA — devuelve EXCLUSIVAMENTE este JSON estructurado válido:
       "resumen": "Máx 3 oraciones en prosa, desarrollo sustancioso y analítico, sin relleno, explicando qué ocurrió y cuál es el avance.",
       "por_que_importa": "Una o dos oraciones con la implicación práctica para la Dirección General de Proyección Social y Co-Creación de la Universidad de La Sabana (p. ej., cómo impacta a Alumni, Innovación, Engagement, Hub o los proyectos estratégicos H1/H2/H3 como Concordia, Symphony, GovLab, AI Lab, etc.).",
       "fuente": "Nombre del medio",
-      "url": "https://..."
+      "url": "https://...",
+      "fecha_publicacion": "YYYY-MM-DD"
     }
   ],
   "oportunidades": [
     {
       "texto": "Descripción breve de la oportunidad accionable (convocatoria, licitación, subvención, fondo o evento) con fecha de cierre",
       "fuente": "Nombre del medio o entidad",
-      "url": "https://..."
+      "url": "https://...",
+      "fecha_cierre": "YYYY-MM-DD o DD de mes de YYYY"
     }
   ]
 }
 
 REGLAS OBLIGATORIAS:
-- 'cifras': Incluye SIEMPRE entre 2 y 4 cifras o estadísticas concretas encontradas en las búsquedas con su URL.
-- 'items': Incluye EXACTAMENTE el número de ítems solicitados por la configuración (1 ítem por cada eje temático indicado).
+- 'cifras': Incluye SIEMPRE entre 2 y 4 cifras o estadísticas concretas encontradas en las búsquedas con su URL y 'fecha_publicacion' ('YYYY-MM-DD').
+- 'items': Incluye EXACTAMENTE el número de ítems solicitados por la configuración (1 ítem por cada eje temático indicado), con 'fecha_publicacion' ('YYYY-MM-DD') obligatoria.
 - 'oportunidades': Incluye SIEMPRE entre 2 y 4 oportunidades o convocatorias reales con fecha de cierre y URL verificable.
+- 'fecha_publicacion': OBLIGATORIO en cada cifra e ítem. DEBE ser una fecha dentro de la ventana de cobertura solicitada. Artículos de inicio de año o meses previos están estrictamente prohibidos.
 - VERACIDAD Y URLs: Usa solo lo encontrado en las búsquedas. En los campos 'url', copia y pega EXACTAMENTE las URLs reales devueltas por la herramienta web_search. NUNCA inventes, modifiques ni supongas URLs o slugs (ej. NO inventes '/convocatoria-2026' si no apareció exactamente así). Si un portal no tiene subpágina específica en los resultados, coloca la URL principal del sitio oficial (ej. 'https://minciencias.gov.co'). Toda URL debe iniciar con 'https://' y ser 100% navegable.
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -254,6 +261,15 @@ CONTEXTO INSTITUCIONAL:
 ────────────────────────────────────────────────────────────────────────────────
 
 {ctx}
+"""
+
+TEMPORAL_ENFORCEMENT_RULE = """
+────────────────────────────────────────────────────────────────────────────────
+DIRECTRIZ MANDATORIA DE RIGOR TEMPORAL Y BÚSQUEDA WEB:
+- TOLERANCIA CERO A NOTICIAS PASADAS: El newsletter cubre EXCLUSIVAMENTE los últimos días. NINGÚN contenido puede ser de inicio de año ni de meses pasados.
+- BÚSQUEDAS CON FECHA: Al usar web_search, incluye SIEMPRE el mes y año actual en cada consulta para evitar artículos viejos indexados con alto SEO.
+- CAMPO 'fecha_publicacion': Cada cifra e ítem DEBE incluir obligatoriamente el campo 'fecha_publicacion' ('YYYY-MM-DD') reflejando su fecha real de publicación dentro del período solicitado.
+────────────────────────────────────────────────────────────────────────────────
 """
 
 
@@ -266,7 +282,11 @@ def build_system_prompt_db(ctx: str) -> str:
                 template = response.data[0]["content"]
         except Exception as e:
             print(f"Error cargando system prompt desde Supabase: {e}")
-    
+
+    # Asegurar que la directriz temporal esté siempre presente incluso si el prompt viene de base de datos
+    if "DIRECTRIZ MANDATORIA DE RIGOR TEMPORAL" not in template:
+        template = template + "\n\n" + TEMPORAL_ENFORCEMENT_RULE
+
     return template.replace("{ctx}", ctx or "Universidad de La Sabana — Dirección General de Proyección Social y Co-Creación")
 
 
@@ -344,6 +364,84 @@ def format_date_es(d: datetime.date) -> str:
     return f"{d.day} de {MESES_ES[d.month]} de {d.year}"
 
 
+def is_url_or_date_old(url: str, fecha_pub: str, fecha_desde: datetime.date) -> bool:
+    """
+    Verifica si una URL o fecha de publicación corresponde a un artículo antiguo
+    (anterior a fecha_desde o de inicio de año / años anteriores).
+    """
+    # 1. Verificar fecha_publicacion explícita si tiene formato YYYY-MM-DD
+    if fecha_pub:
+        m = _re.search(r'(\d{4})-(\d{2})-(\d{2})', str(fecha_pub))
+        if m:
+            try:
+                y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                item_date = datetime.date(y, mo, d)
+                # Margen de gracia de 2 días para diferencias de zona horaria o fin de semana
+                if item_date < (fecha_desde - datetime.timedelta(days=2)):
+                    return True
+            except Exception:
+                pass
+
+    # 2. Verificar si la URL contiene patrones de año/mes obsoletos
+    if url:
+        url_str = str(url).lower()
+        # Años anteriores al año actual
+        for past_year in range(2015, fecha_desde.year):
+            if f"/{past_year}/" in url_str or f"-{past_year}/" in url_str:
+                return True
+
+        # Mismo año pero meses muy anteriores al mes de fecha_desde (ej. inicio de año)
+        curr_year = fecha_desde.year
+        match = _re.search(rf'/{curr_year}/(0[1-9]|1[0-2])/', url_str)
+        if match:
+            url_month = int(match.group(1))
+            min_allowed_month = fecha_desde.month
+            if fecha_desde.day <= 7 and min_allowed_month > 1:
+                min_allowed_month -= 1
+            if url_month < min_allowed_month:
+                return True
+
+    return False
+
+
+def sanitize_newsletter_dates(newsletter: dict, fecha_desde: datetime.date, hoy: datetime.date) -> dict:
+    """
+    Filtra y purga de forma rigurosa cualquier artículo o cifra antigua que se haya colado.
+    """
+    if not isinstance(newsletter, dict):
+        return newsletter
+
+    # Filtrar ítems
+    raw_items = newsletter.get("items") or []
+    cleaned_items = []
+    for it in raw_items:
+        if not isinstance(it, dict):
+            continue
+        u = it.get("url") or ""
+        f = it.get("fecha_publicacion") or ""
+        if is_url_or_date_old(u, f, fecha_desde):
+            print(f"[sanitize_newsletter] Descartado ítem obsoleto: '{it.get('titular')}' ({f} | {u})")
+            continue
+        cleaned_items.append(it)
+    newsletter["items"] = cleaned_items
+
+    # Filtrar cifras
+    raw_cifras = newsletter.get("cifras") or []
+    cleaned_cifras = []
+    for c in raw_cifras:
+        if not isinstance(c, dict):
+            continue
+        u = c.get("url") or ""
+        f = c.get("fecha_publicacion") or ""
+        if is_url_or_date_old(u, f, fecha_desde):
+            print(f"[sanitize_newsletter] Descartada cifra obsoleta: '{c.get('dato')}' ({f} | {u})")
+            continue
+        cleaned_cifras.append(c)
+    newsletter["cifras"] = cleaned_cifras
+
+    return newsletter
+
+
 def build_user_message(cfg: Config | dict) -> str:
     if isinstance(cfg, dict):
         try:
@@ -368,19 +466,63 @@ def build_user_message(cfg: Config | dict) -> str:
 
     if cfg.buscar_web:
         instrucciones_busqueda = (
-            f"INSTRUCCIONES OBLIGATORIAS DE BÚSQUEDA Y CALIDAD:\n"
-            f"1. BÚSQUEDAS ESPECÍFICAS: Usa la herramienta web_search para consultar noticias recientes de CADA UNO de los siguientes ejes temáticos: {ejes}.\n"
-            f"2. BÚSQUEDA DE CIFRAS: Realiza búsquedas para encontrar estadísticas, porcentajes o métricas recientes del sector educación/innovación/IA en Colombia o Iberoamérica.\n"
-            f"3. BÚSQUEDA DE OPORTUNIDADES: Realiza búsquedas de convocatorias abiertas, subvenciones, fondos de financiamiento o eventos con fecha de cierre próxima.\n"
-            f"4. FILTRADO TEMPORAL ESTRICTO: Solo noticias publicadas entre {desde_str} y {hoy_str} ({desde_humano} a {hoy_humano} — últimos {cfg.periodo_dias} días). Descarta artículos viejos.\n"
-            f"5. ESTRUCTURA COMPLETA OBLIGATORIA DEL JSON:\n"
-            f"   - 'titulo': Título ejecutivo y contundente.\n"
-            f"   - 'fecha': '{hoy_str}'.\n"
-            f"   - 'contexto': 'Cobertura de eventos y tendencias relevantes del {desde_humano} al {hoy_humano}.'\n"
-            f"   - 'cifras': Mínimo 2 a 4 estadísticas con 'dato', 'contexto' (explicación de su implicación para el sector), 'fuente' y 'url'.\n"
-            f"   - 'items': Exactamente {num} noticias principales (1 por cada eje), con 'eje', 'titular', 'resumen' (2-3 oraciones densas en contenido en prosa), 'por_que_importa' (implicación estratégica para La Sabana / Proyección Social / Concordia / GovLab / Hub), 'fuente' y 'url'.\n"
-            f"   - 'oportunidades': Mínimo 2 a 4 convocatorias o fondos con 'texto' (incluyendo fecha límite), 'fuente' y 'url'.\n"
-            f"Devuelve EXCLUSIVAMENTE el JSON completo y estructurado con información real y verificada."
+            f"🚨 DIRECTRIZ TEMPORAL ESTRICTA Y OBLIGATORIA (TOLERANCIA CERO A NOTICIAS VIEJAS) 🚨\n"
+            f"- FECHA ACTUAL: {hoy_str} ({hoy_humano}).\n"
+            f"- PERÍODO EXACTO DE COBERTURA: Del {desde_str} al {hoy_str} ({desde_humano} al {hoy_humano} — últimos {cfg.periodo_dias} días).\n"
+            f"- ESTÁ ESTRICTAMENTE PROHIBIDO incluir noticias, artículos, estudios o estadísticas publicados antes del {desde_str}.\n"
+            f"- QUEDA TOTALMENTE PROHIBIDO incluir contenidos de inicio de año ({anio_actual}) como enero, febrero, marzo, abril, mayo, junio, julio o agosto, o de {anio_actual-1}.\n"
+            f"- Si un artículo tiene fecha previa al {desde_str} o su URL contiene rutas de meses pasados (como /{anio_actual}/01/, /{anio_actual}/02/, etc.), DESCÁRTALO DE INMEDIATO.\n\n"
+            f"ESTRATEGIA OBLIGATORIA DE BÚSQUEDA CON 'web_search':\n"
+            f"1. CONSULTAS CON FECHA OBLIGATORIA: En CADA consulta que envíes a web_search DEBES incluir explícitamente '{mes_actual} {anio_actual}' o '{anio_actual}'.\n"
+            f"   NUNCA busques solo nombres genéricos como 'IA educacion superior' o 'sostenibilidad universidades' sin fecha, porque los buscadores devolverán notas indexadas a inicio de año con alto SEO.\n"
+            f"   Ejemplos de búsquedas que DEBES ejecutar:\n"
+            f"   • \"{mes_actual} {anio_actual}\" IA educacion superior Colombia\n"
+            f"   • \"{mes_actual} {anio_actual}\" universidades Minciencias Colombia\n"
+            f"   • \"{mes_actual} {anio_actual}\" transferencia tecnologia Colombia universidades\n"
+            f"   • \"{mes_actual} {anio_actual}\" convocatoria financiamiento investigacion educacion Colombia\n"
+            f"   • \"{mes_actual} {anio_actual}\" Universidad de La Sabana / Javeriana / Andes / Nacional\n"
+            f"2. SI UN EJE TEMÁTICO NO TIENE NOTICIAS DE ESTA SEMANA:\n"
+            f"   Si para un subtema no encuentras una noticia publicada entre el {desde_str} y el {hoy_str}, NO uses un artículo viejo de hace meses. En su lugar, busca noticias de ESTA SEMANA sobre educación superior, alianzas de rectorías o innovación universitaria en Colombia publicadas en {mes_actual} {anio_actual}.\n"
+            f"3. CIFRAS RECIENTES:\n"
+            f"   Busca métricas, datos porcentuales o montos publicados en {mes_actual} {anio_actual} o informes del año {anio_actual} vigentes esta semana.\n"
+            f"4. OPORTUNIDADES ACCIONABLES:\n"
+            f"   Convocatorias o licitaciones con fecha de cierre posterior a {hoy_str} (vigentes para postulación).\n\n"
+            f"ESTRUCTURA COMPLETA OBLIGATORIA DEL JSON:\n"
+            f"Devuelve EXCLUSIVAMENTE este JSON estructurado y válido:\n"
+            f"{{\n"
+            f'  "titulo": "Newsletter Ejecutivo: Avances y Oportunidades Clave en Educación e Innovación",\n'
+            f'  "fecha": "{hoy_str}",\n'
+            f'  "contexto": "Cobertura de eventos y tendencias relevantes del {desde_humano} al {hoy_humano}.",\n'
+            f'  "cifras": [\n'
+            f'    {{\n'
+            f'      "dato": "Cifra concreta de las búsquedas: número, %, monto, plazo, ranking",\n'
+            f'      "contexto": "Frase sustanciosa que explica qué significa o implica esta cifra para el ecosistema educativo e innovación",\n'
+            f'      "fuente": "Nombre del medio o entidad",\n'
+            f'      "url": "https://...",\n'
+            f'      "fecha_publicacion": "YYYY-MM-DD"\n'
+            f'    }}\n'
+            f'  ],\n'
+            f'  "items": [\n'
+            f'    {{\n'
+            f'      "eje": "Nombre del eje temático correspondiente",\n'
+            f'      "titular": "Titular corto, contundente y claro",\n'
+            f'      "resumen": "Máx 3 oraciones en prosa, desarrollo sustancioso y analítico, sin relleno, explicando qué ocurrió y cuál es el avance.",\n'
+            f'      "por_que_importa": "Una o dos oraciones con la implicación práctica para la Dirección General de Proyección Social y Co-Creación de la Universidad de La Sabana (p. ej., cómo impacta a Alumni, Innovación, Engagement, Hub o los proyectos estratégicos H1/H2/H3 como Concordia, Symphony, GovLab, AI Lab, etc.).",\n'
+            f'      "fuente": "Nombre del medio o universidad",\n'
+            f'      "url": "https://...",\n'
+            f'      "fecha_publicacion": "YYYY-MM-DD"\n'
+            f'    }}\n'
+            f'  ],\n'
+            f'  "oportunidades": [\n'
+            f'    {{\n'
+            f'      "texto": "Descripción breve de la oportunidad accionable (convocatoria, licitación, subvención, fondo o evento) con fecha de cierre",\n'
+            f'      "fuente": "Nombre del medio o entidad convocante",\n'
+            f'      "url": "https://...",\n'
+            f'      "fecha_cierre": "YYYY-MM-DD o DD de mes de YYYY"\n'
+            f'    }}\n'
+            f'  ]\n'
+            f"}}\n\n"
+            f"REGLA CRÍTICA: Cada ítem y cifra DEBE tener 'fecha_publicacion' con fecha igual o posterior al {desde_str}. Todo ítem con fecha anterior al {desde_str} viola las instrucciones."
         )
     else:
         instrucciones_busqueda = "Devuelve solo el JSON válido basándote únicamente en las notas proporcionadas por el usuario."
@@ -557,6 +699,9 @@ async def generate_stream(cfg: Config, x_api_key: str = Header(default="")):
             # Parsear JSON final y guardar reporte
             try:
                 data = extract_json(full_text)
+                hoy_d = datetime.date.today()
+                f_desde = hoy_d - datetime.timedelta(days=cfg.periodo_dias or 7)
+                data = sanitize_newsletter_dates(data, f_desde, hoy_d)
                 report_id = None
                 if supabase_client:
                     try:
@@ -971,6 +1116,10 @@ async def _execute_schedule_job(schedule_id: str, api_key: str):
 
         # Extraer JSON final del newsletter
         newsletter = extract_json(full_text)
+        hoy_job = datetime.date.today()
+        p_dias = config.get("periodo_dias") or 7 if isinstance(config, dict) else 7
+        f_desde_job = hoy_job - datetime.timedelta(days=p_dias)
+        newsletter = sanitize_newsletter_dates(newsletter, f_desde_job, hoy_job)
         titulo = newsletter.get("titulo", name)
 
         SCHEDULE_JOBS[schedule_id]["step"] = "Formateando newsletter para WhatsApp..."
