@@ -592,7 +592,7 @@ def get_config_status():
     has_key = bool(os.environ.get("ANTHROPIC_API_KEY", ""))
     return {
         "has_api_key": has_key,
-        "provider": "Anthropic (Claude)",
+        "provider": "Motor de Inteligencia Artificial",
         "default_model": "claude-sonnet-4-6"
     }
 
@@ -858,7 +858,7 @@ async def _execute_schedule_job(schedule_id: str, api_key: str):
     """Ejecuta la generación y envío de un schedule de forma asíncrona en el servidor."""
     SCHEDULE_JOBS[schedule_id] = {
         "status": "running",
-        "step": "Iniciando generación con Claude Sonnet...",
+        "step": "Iniciando generación ejecutiva...",
         "started_at": datetime.datetime.utcnow().isoformat(),
         "error": None,
         "whatsapp_error": None,
@@ -898,7 +898,7 @@ async def _execute_schedule_job(schedule_id: str, api_key: str):
         current_block_type = ""
         current_tool_input = ""
 
-        SCHEDULE_JOBS[schedule_id]["step"] = "Buscando noticias recientes en la web con Claude..."
+        SCHEDULE_JOBS[schedule_id]["step"] = "Buscando noticias recientes en la web..."
 
         async with client.messages.stream(
             model=model,
@@ -925,7 +925,7 @@ async def _execute_schedule_job(schedule_id: str, api_key: str):
                         chunk_text = getattr(delta, "text", "")
                         full_text += chunk_text
                         if len(full_text) % 500 < len(chunk_text) + 2:
-                            SCHEDULE_JOBS[schedule_id]["step"] = f"Redactando newsletter con Claude ({len(full_text)} caracteres)..."
+                            SCHEDULE_JOBS[schedule_id]["step"] = f"Redactando análisis ejecutivo ({len(full_text)} caracteres)..."
                     elif dtype == "input_json_delta":
                         current_tool_input += getattr(delta, "partial_json", "")
 

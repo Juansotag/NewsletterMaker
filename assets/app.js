@@ -78,7 +78,7 @@ async function generar() {
   showLiveLog();
 
   try {
-    label.innerHTML = '<span class="spinner"></span> Buscando y redactando con Claude Sonnet…';
+    label.innerHTML = '<span class="spinner"></span> Buscando noticias y redactando análisis…';
 
     const response = await fetch('/api/generate/stream', {
       method: 'POST',
@@ -1129,7 +1129,7 @@ async function runScheduleNow(id, btn) {
 
     if (statusEl) {
       statusEl.style.color = 'var(--text-muted)';
-      statusEl.textContent = 'Conectando con Claude Sonnet…';
+      statusEl.textContent = 'Iniciando generación ejecutiva…';
     }
 
     // Sondear estado periódicamente
@@ -1154,7 +1154,7 @@ async function runScheduleNow(id, btn) {
         if (job.status === 'running') {
           if (statusEl) {
             statusEl.style.color = 'var(--text-muted)';
-            statusEl.textContent = job.step || 'Generando con Claude Sonnet…';
+            statusEl.textContent = job.step || 'Generando informe ejecutivo…';
           }
         } else if (job.status === 'completed') {
           clearInterval(pollInterval);
