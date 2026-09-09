@@ -35,10 +35,16 @@ app = FastAPI(title="Newsletter Ejecutivo GovLab")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ─── Clientes OpenAI ──────────────────────────────────────────────────────────
-_openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+def resolve_api_key(x_api_key: str = "") -> str:
+    env_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    if x_api_key and not x_api_key.startswith("sk-ant-"):
+        return x_api_key.strip()
+    return ""
 
 def get_openai_client(api_key: str = "") -> openai.AsyncOpenAI:
-    key = api_key or os.environ.get("OPENAI_API_KEY", "")
+    key = resolve_api_key(api_key)
     return openai.AsyncOpenAI(api_key=key)
 
 # ─── Cliente Supabase ─────────────────────────────────────────────────────────
@@ -408,7 +414,7 @@ def extract_json(text: str) -> dict:
 # ─── Streaming endpoint ────────────────────────────────────────────────────────
 @app.post("/api/generate/stream")
 async def generate_stream(cfg: Config, x_api_key: str = Header(default="")):
-    api_key = os.environ.get("OPENAI_API_KEY", "") or x_api_key
+    api_key = resolve_api_key(x_api_key)
     if not api_key:
         async def _err():
             yield f"data: {json.dumps({'type':'error','message':'Falta la clave API de OpenAI. Configura OPENAI_API_KEY en las variables de entorno de tu servidor o archivo .env.'})}\n\n"
@@ -816,7 +822,7 @@ async def run_schedule_now(schedule_id: str, x_api_key: str = Header(default="")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    api_key = x_api_key or os.environ.get("OPENAI_API_KEY", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+    api_key = resolve_api_key(x_api_key)
     if not api_key:
         raise HTTPException(status_code=400, detail="Falta la clave API de OpenAI (OPENAI_API_KEY en variables de entorno)")
 
@@ -896,7 +902,7 @@ def get_whatsapp_status():
 
 @app.post("/api/docs/assist", response_model=AssistResponse)
 async def assist_doc(body: AssistRequest, x_api_key: str = Header(default="")):
-    api_key = os.environ.get("OPENAI_API_KEY", "") or x_api_key
+    api_key = resolve_api_key(x_api_key)
     if not api_key:
         raise HTTPException(status_code=400, detail="Falta la clave API de OpenAI (OPENAI_API_KEY en variables de entorno)")
         

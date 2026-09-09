@@ -1114,11 +1114,9 @@ async function runScheduleNow(id, btn) {
   if (btn) btn.disabled = true;
   if (statusEl) { statusEl.style.color = 'var(--text-muted)'; statusEl.textContent = 'Generando y enviando por WhatsApp…'; }
 
-  const apiKey = localStorage.getItem('anthropic_api_key') || '';
   try {
     const r = await fetch(`/api/schedules/${id}/run`, {
       method: 'POST',
-      headers: apiKey ? { 'X-Api-Key': apiKey } : {},
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
@@ -1522,22 +1520,16 @@ function esc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-// Migración de modelos antiguos/inválidos en localStorage
-const _oldModels = [
-  'claude-3-5-haiku-latest', 'claude-3-5-haiku-20241022',
-  'claude-3-5-sonnet-latest', 'claude-3-7-sonnet-latest',
-  'claude-sonnet-4-5', 'claude-3-opus-latest'
-];
-if (_oldModels.includes(localStorage.getItem('anthropic_model_assist'))) {
-  localStorage.setItem('anthropic_model_assist', 'claude-haiku-4-5-20251001');
-}
-if (_oldModels.includes(localStorage.getItem('anthropic_model_generation'))) {
-  localStorage.setItem('anthropic_model_generation', 'claude-sonnet-4-6');
-}
+// Limpieza de claves obsoletas de localStorage
+try {
+  localStorage.removeItem('anthropic_api_key');
+  localStorage.removeItem('anthropic_model_assist');
+  localStorage.removeItem('anthropic_model_generation');
+  localStorage.removeItem('openai_api_key');
+} catch (e) {}
 
 // Carga inicial de estado de llaves
 checkServerKeyStatus();
-updateBrowserKeyStatusLabel(!!localStorage.getItem('anthropic_api_key'));
 
 // ══════════════════════════════════════════════════════
 // TUTORIAL DE GUÍA RÁPIDA (PARA DIRECTIVOS)
