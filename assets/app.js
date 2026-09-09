@@ -74,21 +74,41 @@ function getConfig() {
 }
 
 // ══════════════════════════════════════════════════════
-// GENERACIÓN CON STREAMING
+// GENERACIÓN Y DESPACHO DIRECTO A WHATSAPP
 // ══════════════════════════════════════════════════════
-async function generar() {
+let _lastSentTarget = '';
+
+async function sendNowToWhatsApp() {
+  const target = (document.getElementById('sendWhatsAppTo')?.value || '').trim();
+  const statusEl = document.getElementById('sendImmediateStatus');
+  const btnSend = document.getElementById('btnSendWhatsAppNow');
+  const btnSched = document.getElementById('btnCreateSchedule');
+  const label = document.getElementById('btnSendLabel');
+
+  if (!target) {
+    if (statusEl) {
+      statusEl.style.color = 'var(--c-red)';
+      statusEl.textContent = 'Por favor ingresa el número o grupo de WhatsApp destino para despachar el newsletter.';
+    }
+    document.getElementById('sendWhatsAppTo')?.focus();
+    return;
+  }
+
   const cfg = getConfig();
   cfg.model = localStorage.getItem('claude_model_generation') || 'claude-sonnet-4-6';
-  const btn = document.getElementById('generar');
-  const label = document.getElementById('btnLabel');
 
-  btn.disabled = true;
-  label.innerHTML = '<span class="spinner"></span> Conectando…';
+  if (btnSend) btnSend.disabled = true;
+  if (btnSched) btnSched.disabled = true;
+  if (label) label.innerHTML = '<span class="spinner"></span> Generando y enviando…';
+  if (statusEl) {
+    statusEl.style.color = 'var(--text-muted)';
+    statusEl.textContent = `Buscando información, redactando y despachando a WhatsApp (${target})…`;
+  }
+
   showLiveLog();
+  addLog(`Iniciando generación para despacho directo a WhatsApp: ${esc(target)}`, 'search');
 
   try {
-    label.innerHTML = '<span class="spinner"></span> Buscando noticias y redactando análisis…';
-
     const response = await fetch('/api/generate/stream', {
       method: 'POST',
       headers: {
@@ -132,22 +152,57 @@ async function generar() {
           case 'text_chunk':
             textLen = evt.total || textLen;
             if (!writingEl) {
-              writingEl = addLog(`Redactando… (${textLen} car.)`, 'writing');
+              writingEl = addLog(`Redactando análisis… (${textLen} car.)`, 'writing');
             } else {
-              writingEl.textContent = `Redactando… (${textLen} car.)`;
+              writingEl.textContent = `Redactando análisis… (${textLen} car.)`;
             }
             break;
           case 'done':
             _currentReportId = evt.report_id || null;
             _lastGeneratedNewsletter = evt.newsletter;
+            _lastSentTarget = target;
+            addLog(`Redacción completada. Generando documento PDF y despachando a WhatsApp (${esc(target)})…`, 'writing');
+
+            // Despacho a WhatsApp
+            try {
+              const sendRes = await fetch('/api/whatsapp/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  to: target,
+                  newsletter: evt.newsletter
+                })
+              });
+              const sendData = await sendRes.json().catch(() => ({}));
+              if (!sendRes.ok) {
+                throw new Error(sendData.detail || `HTTP ${sendRes.status}`);
+              }
+              if (statusEl) {
+                statusEl.style.color = 'var(--c-green)';
+                statusEl.textContent = `Enviado exitosamente a ${target} vía WhatsApp (Texto y PDF adjunto).`;
+              }
+            } catch (werr) {
+              if (statusEl) {
+                statusEl.style.color = 'var(--c-yellow)';
+                statusEl.textContent = `Newsletter generado pero aviso de WhatsApp: ${werr.message}`;
+              }
+            }
+
             renderNewsletter(evt.newsletter);
-            btn.disabled = false;
-            label.textContent = 'Generar newsletter';
+            if (btnSend) btnSend.disabled = false;
+            if (btnSched) btnSched.disabled = false;
+            if (label) label.textContent = 'Enviar Ahora a WhatsApp';
             return;
+
           case 'error':
             showError(evt.message);
-            btn.disabled = false;
-            label.textContent = 'Generar newsletter';
+            if (statusEl) {
+              statusEl.style.color = 'var(--c-red)';
+              statusEl.textContent = `Error: ${evt.message}`;
+            }
+            if (btnSend) btnSend.disabled = false;
+            if (btnSched) btnSched.disabled = false;
+            if (label) label.textContent = 'Enviar Ahora a WhatsApp';
             return;
         }
       }
@@ -155,22 +210,29 @@ async function generar() {
 
   } catch (err) {
     if (err.message === 'Failed to fetch') {
-      showError('No se pudo conectar con el backend en http://localhost:8000. ¿Está corriendo el servidor?');
+      showError('No se pudo conectar con el servidor.');
     } else {
       showError(`Error: ${err.message}`);
     }
+    if (statusEl) {
+      statusEl.style.color = 'var(--c-red)';
+      statusEl.textContent = `Error: ${err.message}`;
+    }
   }
 
-  btn.disabled = false;
-  label.textContent = 'Generar newsletter';
+  if (btnSend) btnSend.disabled = false;
+  if (btnSched) btnSched.disabled = false;
+  if (label) label.textContent = 'Enviar Ahora a WhatsApp';
 }
+
+const generar = sendNowToWhatsApp;
 
 function showLiveLog() {
   document.getElementById('output').innerHTML = `
 <div class="live-log">
   <div class="log-header">
     <span class="log-pulse"></span>
-    <span>El LLM está buscando y redactando tu newsletter…</span>
+    <span>Buscando información, redactando y despachando a WhatsApp…</span>
   </div>
   <div class="log-entries" id="logEntries"></div>
 </div>`;
@@ -279,9 +341,15 @@ function renderNewsletter(d) {
   }).join('')}</ul>
 </div>` : '';
 
+  const statusBanner = _lastSentTarget ? `
+<div style="background:#edf7ed;border-left:4px solid var(--c-green);padding:.75rem 1rem;border-radius:6px;margin-bottom:1rem;font-size:.84rem;color:#1e4620;">
+  <b>Despachado a WhatsApp:</b> Boletín enviado con éxito a <b>${esc(_lastSentTarget)}</b> (Texto estructurado y PDF ejecutivo adjunto).
+</div>` : '';
+
   out.innerHTML = `
+${statusBanner}
 <div class="toolbar" style="display:flex;gap:.5rem;justify-content:flex-end;margin-bottom:1rem;flex-wrap:wrap;">
-  <button class="btn" onclick="sendCurrentEditionWhatsApp()" style="font-size:.78rem;padding:.4rem .85rem;">Enviar por WhatsApp</button>
+  <button class="btn" onclick="sendCurrentEditionWhatsApp()" style="font-size:.78rem;padding:.4rem .85rem;">Reenviar a WhatsApp</button>
   <button class="btn-ghost" onclick="copyNewsletterWhatsAppText(this)" style="font-size:.78rem;padding:.4rem .8rem;">Copiar Texto</button>
   <button class="btn-ghost" onclick="downloadPDF('output', this)" style="font-size:.78rem;padding:.4rem .8rem;">Descargar PDF</button>
 </div>
@@ -1129,16 +1197,13 @@ function loadScheduleIntoEditor(id) {
     });
   }
 
-  const accordion = document.getElementById('scheduleAccordion');
-  if (accordion) accordion.open = true;
-
   const configPanel = document.getElementById('configPanel');
   if (configPanel) configPanel.scrollIntoView({ behavior: 'smooth' });
 
   const stat = document.getElementById('sendImmediateStatus');
   if (stat) {
     stat.style.color = 'var(--c-blue-dark)';
-    stat.textContent = `Configuración de "${s.name}" cargada en el editor.`;
+    stat.textContent = `Configuración de "${s.name}" cargada en el formulario para editar o despachar.`;
     setTimeout(() => { if (stat) stat.textContent = ''; }, 4000);
   }
 }
@@ -1157,7 +1222,7 @@ async function createScheduleFromUnifiedForm() {
     return;
   }
   if (!target) {
-    if (statusEl) { statusEl.style.color = 'var(--c-red)'; statusEl.textContent = 'Falta el número o grupo de WhatsApp destino (ingrésalo en el campo superior).'; }
+    if (statusEl) { statusEl.style.color = 'var(--c-red)'; statusEl.textContent = 'Falta el número o grupo de WhatsApp destino.'; }
     document.getElementById('sendWhatsAppTo')?.focus();
     return;
   }
@@ -1187,9 +1252,10 @@ async function createScheduleFromUnifiedForm() {
     }
     if (statusEl) {
       statusEl.style.color = 'var(--c-green)';
-      statusEl.textContent = 'Programación guardada exitosamente con los ejes temáticos y parámetros seleccionados.';
+      statusEl.textContent = 'Programación guardada exitosamente en el servidor.';
     }
     await loadSchedules();
+    document.getElementById('scheduleList')?.scrollIntoView({ behavior: 'smooth' });
     setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
   } catch (e) {
     if (statusEl) {
