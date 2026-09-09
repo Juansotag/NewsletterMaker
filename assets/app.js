@@ -1498,15 +1498,6 @@ function clearConfig() {
     setTimeout(() => badge.classList.remove('show'), 3000);
   }
 }
-    badge.style.color = 'var(--c-red)';
-    badge.classList.add('show');
-    setTimeout(() => {
-      badge.classList.remove('show');
-      badge.textContent = 'Configuración Guardada';
-      badge.style.color = 'var(--c-green)';
-    }, 3000);
-  }
-}
 
 function toggleApiKeyVisibility() {
   const input = document.getElementById('apiKeyInput');
