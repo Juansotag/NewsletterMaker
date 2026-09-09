@@ -26,6 +26,8 @@ except ImportError:
     _resend = None
 
 from backend.email_render import render_email_html
+from backend.whatsapp_render import render_whatsapp_text
+from backend.whatsapp_client import send_whatsapp_text, check_whatsapp_status, normalize_whatsapp_number
 
 app = FastAPI(title="Newsletter Ejecutivo GovLab")
 
@@ -218,13 +220,15 @@ class AssistRequest(BaseModel):
 class ScheduleCreate(BaseModel):
     name: str
     config: dict
-    email_to: str
+    whatsapp_to: Optional[str] = None
+    email_to: Optional[str] = None
     cron: str   # '0 7 * * 1'
 
 
 class ScheduleUpdate(BaseModel):
     name: Optional[str] = None
     config: Optional[dict] = None
+    whatsapp_to: Optional[str] = None
     email_to: Optional[str] = None
     cron: Optional[str] = None
     active: Optional[bool] = None
@@ -648,7 +652,11 @@ def list_schedules():
         raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
         resp = supabase_client.table("schedules").select("*").order("created_at", desc=True).execute()
-        return {"schedules": resp.data}
+        schedules = resp.data or []
+        # Asegurar campo whatsapp_to para el frontend
+        for s in schedules:
+            s["whatsapp_to"] = s.get("whatsapp_to") or s.get("email_to", "")
+        return {"schedules": schedules}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -658,11 +666,12 @@ def create_schedule(body: ScheduleCreate):
     if not supabase_client:
         raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
+        target = body.whatsapp_to or body.email_to or ""
         next_run = _calc_next_run(body.cron)
         data = {
             "name":     body.name,
             "config":   body.config,
-            "email_to": body.email_to,
+            "email_to": target,  # Compatibilidad con columna existente en Supabase
             "cron":     body.cron,
             "next_run": next_run,
             "active":   True,
@@ -670,7 +679,9 @@ def create_schedule(body: ScheduleCreate):
         resp = supabase_client.table("schedules").insert(data).execute()
         if not resp.data:
             raise HTTPException(status_code=500, detail="Error al crear schedule")
-        return resp.data[0]
+        row = resp.data[0]
+        row["whatsapp_to"] = row.get("whatsapp_to") or row.get("email_to", "")
+        return row
     except HTTPException:
         raise
     except Exception as e:
@@ -685,12 +696,16 @@ def update_schedule(schedule_id: str, body: ScheduleUpdate):
         update = {k: v for k, v in body.dict().items() if v is not None}
         if not update:
             raise HTTPException(status_code=400, detail="Sin campos para actualizar")
+        if "whatsapp_to" in update:
+            update["email_to"] = update.pop("whatsapp_to")
         if "cron" in update:
             update["next_run"] = _calc_next_run(update["cron"])
         resp = supabase_client.table("schedules").update(update).eq("id", schedule_id).execute()
         if not resp.data:
             raise HTTPException(status_code=404, detail="Schedule no encontrado")
-        return resp.data[0]
+        row = resp.data[0]
+        row["whatsapp_to"] = row.get("whatsapp_to") or row.get("email_to", "")
+        return row
     except HTTPException:
         raise
     except Exception as e:
@@ -719,7 +734,9 @@ def toggle_schedule(schedule_id: str):
             raise HTTPException(status_code=404, detail="Schedule no encontrado")
         new_active = not cur.data[0]["active"]
         resp = supabase_client.table("schedules").update({"active": new_active}).eq("id", schedule_id).execute()
-        return resp.data[0]
+        row = resp.data[0]
+        row["whatsapp_to"] = row.get("whatsapp_to") or row.get("email_to", "")
+        return row
     except HTTPException:
         raise
     except Exception as e:
@@ -728,7 +745,7 @@ def toggle_schedule(schedule_id: str):
 
 @app.post("/api/schedules/{schedule_id}/run")
 async def run_schedule_now(schedule_id: str, x_api_key: str = Header(default="")):
-    """Disparo manual: genera, envía email y registra reporte con origen='programado'."""
+    """Disparo manual: genera el newsletter, lo envía por WhatsApp y registra reporte con origen='programado'."""
     if not supabase_client:
         raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
@@ -746,30 +763,36 @@ async def run_schedule_now(schedule_id: str, x_api_key: str = Header(default="")
         raise HTTPException(status_code=400, detail="Falta ANTHROPIC_API_KEY")
 
     config  = sched.get("config", {})
-    email   = sched.get("email_to", "")
+    target  = sched.get("whatsapp_to") or sched.get("email_to", "")
     cron    = sched.get("cron", "0 7 * * 1")
     name    = sched.get("name", "Schedule")
 
-    # Generar newsletter (reutiliza la misma lógica que el stream pero en modo sync)
+    # Generar newsletter
     try:
         from backend.run_due import generate_once as _gen
         newsletter, queries = await _gen(config, api_key=api_key)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generando newsletter: {e}")
 
-    titulo  = newsletter.get("titulo", name)
-    subject = f"Newsletter GovLab — {titulo}"
-    html    = render_email_html(newsletter, subject=subject)
+    titulo = newsletter.get("titulo", name)
+    whatsapp_text = render_whatsapp_text(newsletter)
 
-    # Enviar email
-    email_id = ""
-    resend_error = ""
-    if email:
+    # Enviar WhatsApp vía Open-Wa
+    whatsapp_id = ""
+    whatsapp_error = ""
+    if target:
         try:
-            email_id = _send_email(email, subject, html)
+            res = send_whatsapp_text(target, whatsapp_text)
+            if res.get("success"):
+                whatsapp_id = res.get("id", "")
+            else:
+                whatsapp_error = res.get("error", "Error desconocido enviando por WhatsApp")
+                print(f"[run_now] Error enviando WhatsApp: {whatsapp_error}")
         except Exception as e:
-            resend_error = str(e)
-            print(f"[run_now] Error enviando email: {e}")
+            whatsapp_error = str(e)
+            print(f"[run_now] Excepción enviando WhatsApp: {e}")
+    else:
+        whatsapp_error = "No hay número de WhatsApp configurado"
 
     # Guardar reporte
     report_id = None
@@ -798,12 +821,19 @@ async def run_schedule_now(schedule_id: str, x_api_key: str = Header(default="")
         print(f"[run_now] Error actualizando next_run: {e}")
 
     return {
-        "ok":          True,
-        "report_id":   report_id,
-        "email_id":    email_id,
-        "email_error": resend_error,
-        "titulo":      titulo,
+        "ok":             True,
+        "report_id":      report_id,
+        "whatsapp_id":    whatsapp_id,
+        "whatsapp_error": whatsapp_error,
+        "titulo":         titulo,
     }
+
+
+# ─── WhatsApp status endpoint ──────────────────────────────────────────────────
+@app.get("/api/whatsapp/status")
+def get_whatsapp_status():
+    """Consulta el estado del servidor Open-Wa."""
+    return check_whatsapp_status()
 
 
 @app.post("/api/docs/assist", response_model=AssistResponse)

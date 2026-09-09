@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 .venv/
+_IGNORE_*
+*.postman_collection.json
+*.sw_col.json
+.node-persist/

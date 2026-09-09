@@ -20,6 +20,8 @@ from supabase import create_client, ClientOptions
 from croniter import croniter
 
 from backend.email_render import render_email_html
+from backend.whatsapp_render import render_whatsapp_text
+from backend.whatsapp_client import send_whatsapp_text
 from backend.main import resolve_doc_references, extract_json, build_user_message
 
 
@@ -185,7 +187,7 @@ async def run_due_schedules():
         sid    = sched["id"]
         name   = sched.get("name", "Schedule sin nombre")
         config = sched.get("config", {})
-        email  = sched.get("email_to", "")
+        target = sched.get("whatsapp_to") or sched.get("email_to", "")
         cron   = sched.get("cron", "0 7 * * 1")
 
         print(f"[run_due] Procesando: {name} ({sid})")
@@ -196,20 +198,23 @@ async def run_due_schedules():
             print(f"[run_due] Error generando newsletter para {name}: {e}")
             continue
 
-        titulo  = newsletter.get("titulo", name)
-        subject = f"Newsletter GovLab — {titulo}"
-        html    = render_email_html(newsletter, subject=subject)
+        titulo = newsletter.get("titulo", name)
+        whatsapp_msg = render_whatsapp_text(newsletter)
 
-        # Enviar email
-        email_id = ""
-        if email and _resend_key:
+        # Enviar WhatsApp
+        whatsapp_id = ""
+        if target:
             try:
-                email_id = send_email(email, subject, html)
-                print(f"[run_due] Email enviado a {email} (id={email_id})")
+                res = send_whatsapp_text(target, whatsapp_msg)
+                if res.get("success"):
+                    whatsapp_id = res.get("id", "")
+                    print(f"[run_due] WhatsApp enviado a {target} (id={whatsapp_id})")
+                else:
+                    print(f"[run_due] Error enviando WhatsApp a {target}: {res.get('error')}")
             except Exception as e:
-                print(f"[run_due] Error enviando email para {name}: {e}")
+                print(f"[run_due] Excepción enviando WhatsApp para {name}: {e}")
         else:
-            print(f"[run_due] Sin email destino o RESEND_API_KEY. Solo registrando reporte.")
+            print(f"[run_due] Sin destinatario de WhatsApp para {name}. Solo registrando reporte.")
 
         # Guardar reporte
         try:

@@ -1029,6 +1029,7 @@ function renderScheduleList(schedules) {
     const badge = s.active
       ? '<span style="background:#e6f4ea;color:#1b7a3c;font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:20px;">Activo</span>'
       : '<span style="background:#fce8e8;color:#b42f2f;font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:20px;">Pausado</span>';
+    const target = s.whatsapp_to || s.email_to || 'Sin destino';
     return `<div style="border:1px solid var(--border-color);border-radius:10px;padding:1rem 1.1rem;margin-bottom:.65rem;background:#fff;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:.5rem;">
         <div style="flex:1;min-width:0;">
@@ -1037,7 +1038,7 @@ function renderScheduleList(schedules) {
             ${badge}
           </div>
           <div style="font-size:.76rem;color:var(--text-muted);margin-top:.3rem;">
-            ${esc(s.email_to)} · ${esc(_humanizeCron(s.cron))}
+            📱 WhatsApp: <b>${esc(target)}</b> · ${esc(_humanizeCron(s.cron))}
           </div>
           <div style="font-size:.73rem;color:var(--text-muted);margin-top:.2rem;">
             Último envío: ${lastRun} · Próximo: ${nextRun}
@@ -1075,13 +1076,13 @@ function _buildScheduleConfig() {
 /** Crea una nueva programación */
 async function createSchedule() {
   const name = document.getElementById('sendName').value.trim();
-  const email = document.getElementById('sendEmail').value.trim();
+  const target = document.getElementById('sendEmail').value.trim();
   const cron = _activeCron();
   const statusEl = document.getElementById('sendCreateStatus');
   const btn = document.getElementById('btnCreateSchedule');
 
-  if (!name) { statusEl.style.color = 'var(--c-red)'; statusEl.textContent = 'Falta el nombre.'; return; }
-  if (!email) { statusEl.style.color = 'var(--c-red)'; statusEl.textContent = 'Falta el email destino.'; return; }
+  if (!name) { statusEl.style.color = 'var(--c-red)'; statusEl.textContent = 'Falta el nombre de la programación.'; return; }
+  if (!target) { statusEl.style.color = 'var(--c-red)'; statusEl.textContent = 'Falta el número o grupo de WhatsApp destino.'; return; }
   if (!cron) { statusEl.style.color = 'var(--c-red)'; statusEl.textContent = 'Falta la expresión cron.'; return; }
 
   btn.disabled = true;
@@ -1092,14 +1093,14 @@ async function createSchedule() {
     const r = await fetch('/api/schedules', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email_to: email, cron, config: _buildScheduleConfig() }),
+      body: JSON.stringify({ name, whatsapp_to: target, email_to: target, cron, config: _buildScheduleConfig() }),
     });
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
       throw new Error(err.detail || `HTTP ${r.status}`);
     }
     statusEl.style.color = 'var(--c-green)';
-    statusEl.textContent = '✓ Programación creada.';
+    statusEl.textContent = '✓ Programación creada para WhatsApp.';
     document.getElementById('sendName').value = '';
     document.getElementById('sendEmail').value = '';
     await loadSchedules();
@@ -1115,7 +1116,7 @@ async function createSchedule() {
 async function runScheduleNow(id, btn) {
   const statusEl = document.getElementById(`sched-status-${id}`);
   if (btn) btn.disabled = true;
-  if (statusEl) { statusEl.style.color = 'var(--text-muted)'; statusEl.textContent = 'Generando y enviando…'; }
+  if (statusEl) { statusEl.style.color = 'var(--text-muted)'; statusEl.textContent = 'Generando y enviando por WhatsApp…'; }
 
   const apiKey = localStorage.getItem('anthropic_api_key') || '';
   try {
@@ -1126,15 +1127,15 @@ async function runScheduleNow(id, btn) {
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
 
-    if (data.email_error) {
+    if (data.whatsapp_error) {
       if (statusEl) {
         statusEl.style.color = 'var(--c-yellow)';
-        statusEl.textContent = `Newsletter generado pero error de email: ${data.email_error}`;
+        statusEl.textContent = `Newsletter generado pero aviso de WhatsApp: ${data.whatsapp_error}`;
       }
     } else {
       if (statusEl) {
         statusEl.style.color = 'var(--c-green)';
-        statusEl.textContent = `✓ Enviado correctamente. Reporte guardado en historial.`;
+        statusEl.textContent = `✓ Enviado por WhatsApp exitosamente. Reporte guardado en historial.`;
       }
     }
     await loadSchedules();
@@ -1425,6 +1426,43 @@ function updateBrowserKeyStatusLabel(hasKey) {
   }
 }
 
+async function checkWhatsAppStatus() {
+  const srvEl = document.getElementById('openwaServerStatus');
+  const sesEl = document.getElementById('openwaSessionStatus');
+  const helpEl = document.getElementById('openwaHelpText');
+  if (!srvEl || !sesEl) return;
+
+  try {
+    const r = await fetch('/api/whatsapp/status');
+    const data = await r.json();
+
+    if (data.online) {
+      srvEl.textContent = `En línea (${data.url})`;
+      srvEl.style.color = 'var(--c-green)';
+
+      if (data.connected) {
+        sesEl.textContent = 'Conectado a WhatsApp ✓';
+        sesEl.style.color = 'var(--c-green)';
+        if (helpEl) helpEl.textContent = 'Listo para enviar newsletters por WhatsApp.';
+      } else {
+        sesEl.textContent = 'Pendiente de escanear QR';
+        sesEl.style.color = 'var(--c-yellow)';
+        if (helpEl) helpEl.textContent = 'El servidor Open-Wa está corriendo pero requiere vincular tu WhatsApp escaneando el código QR en la consola de Open-Wa.';
+      }
+    } else {
+      srvEl.textContent = `Desconectado (${data.url})`;
+      srvEl.style.color = 'var(--c-red)';
+      sesEl.textContent = 'No disponible';
+      sesEl.style.color = 'var(--text-muted)';
+      if (helpEl) helpEl.textContent = 'Para activar el envío por WhatsApp, inicia el servicio Open-Wa o configura la variable OPENWA_API_URL en tu servidor.';
+    }
+  } catch (e) {
+    srvEl.textContent = 'Error al consultar';
+    srvEl.style.color = 'var(--c-yellow)';
+    sesEl.textContent = '—';
+  }
+}
+
 function loadConfigTab() {
   const key = localStorage.getItem('anthropic_api_key') || '';
   const input = document.getElementById('apiKeyInput');
@@ -1441,6 +1479,7 @@ function loadConfigTab() {
 
   updateBrowserKeyStatusLabel(!!key);
   checkServerKeyStatus();
+  checkWhatsAppStatus();
 }
 
 function saveConfig() {

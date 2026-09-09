@@ -317,6 +317,20 @@
             </select>
           </div>
 
+          <!-- Estado de Open-Wa (WhatsApp) -->
+          <h2 style="margin-top: 2rem; margin-bottom: 0.75rem;">Servicio de WhatsApp (Open-Wa)</h2>
+          <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.25rem; border-bottom: 1px solid var(--border-color); padding-bottom: 1.25rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem;">
+              <span>Servidor Open-Wa:</span>
+              <span id="openwaServerStatus" style="font-weight: 700; color: var(--text-muted);">Verificando...</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem;">
+              <span>Sesión de WhatsApp:</span>
+              <span id="openwaSessionStatus" style="font-weight: 700; color: var(--text-muted);">Verificando...</span>
+            </div>
+            <div id="openwaHelpText" style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.4;"></div>
+          </div>
+
           <!-- Botones de Acción -->
           <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
             <button class="btn" id="btnSaveConfig" onclick="saveConfig()" style="margin-top: 0; flex: 1;">
@@ -372,8 +386,8 @@
   <div id="panel-send" class="tab-panel">
     <main>
       <div class="hero">
-        <h1>Envío programado</h1>
-        <p>Programa un newsletter recurrente. Se generará automáticamente y se enviará al correo configurado.</p>
+        <h1>Envío programado por WhatsApp</h1>
+        <p>Programa un newsletter recurrente. Se generará automáticamente con IA y se enviará directamente por WhatsApp al contacto o grupo configurado.</p>
       </div>
 
       <div class="grid" style="grid-template-columns: 380px 1fr; align-items: start;">
@@ -385,11 +399,14 @@
           <div style="display:flex;flex-direction:column;gap:.85rem;">
             <div>
               <label class="label-section" style="margin-top:0;">Nombre</label>
-              <input id="sendName" type="text" placeholder="Ej: Newsletter semanal" style="width:100%;">
+              <input id="sendName" type="text" placeholder="Ej: Radar Ejecutivo Lunes" style="width:100%;">
             </div>
             <div>
-              <label class="label-section" style="margin-top:0;">Email destino</label>
-              <input id="sendEmail" type="email" placeholder="juancarlos@unisabana.edu.co" style="width:100%;">
+              <label class="label-section" style="margin-top:0;">WhatsApp destino (Número o Grupo)</label>
+              <input id="sendEmail" type="text" placeholder="+57 300 123 4567 o 120363...@g.us" style="width:100%;">
+              <span style="font-size:.72rem;color:var(--text-muted);display:block;margin-top:.25rem;">
+                Ingresa con código de país (+57 para Colombia). Para grupos usa el ID del grupo (@g.us).
+              </span>
             </div>
             <div>
               <label class="label-section" style="margin-top:0;">Frecuencia</label>
@@ -440,7 +457,7 @@
             </details>
 
             <button class="btn" id="btnCreateSchedule" onclick="createSchedule()" style="margin-top:.25rem;">
-              Programar envío
+              Programar envío por WhatsApp
             </button>
             <div id="sendCreateStatus" style="font-size:.8rem;"></div>
           </div>
