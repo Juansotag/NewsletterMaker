@@ -249,3 +249,94 @@ def send_whatsapp_text(to: str, text: str) -> dict:
         }
     except Exception as e:
         return {"success": False, "id": "", "chat_id": to, "error": str(e)}
+
+
+def send_whatsapp_document(to: str, pdf_bytes: bytes, filename: str = "Boletin_Ejecutivo_Unisabana.pdf", caption: str = "") -> dict:
+    """
+    Envía un documento PDF a través del servidor configurado de WhatsApp (Evolution API u Open-Wa).
+    """
+    import base64
+
+    cfg = get_whatsapp_config()
+    provider = cfg["provider"]
+    url = cfg["url"]
+    key = cfg["key"]
+    instance = cfg["instance"]
+
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["apikey"] = key
+        headers["Authorization"] = f"Bearer {key}"
+        headers["api_key"] = key
+
+    b64_data = base64.b64encode(pdf_bytes).decode("utf-8")
+
+    try:
+        with httpx.Client(timeout=45.0, verify=False) as client:
+
+            # ── 1. Evolution API ───────────────────────────────────────────
+            if provider == "evolution":
+                number = normalize_whatsapp_number(to, for_evolution=True)
+                if not number:
+                    raise ValueError("Número de WhatsApp destinatario vacío o inválido")
+
+                payload = {
+                    "number": number,
+                    "mediatype": "document",
+                    "mimetype": "application/pdf",
+                    "caption": caption or "Boletín Ejecutivo — Universidad de La Sabana",
+                    "media": b64_data,
+                    "fileName": filename
+                }
+                endpoint = f"{url}/message/sendMedia/{instance}"
+                resp = client.post(endpoint, json=payload, headers=headers)
+
+                if resp.status_code in (200, 201):
+                    data = resp.json()
+                    msg_id = data.get("key", {}).get("id") or str(data.get("id", ""))
+                    return {"success": True, "id": msg_id, "chat_id": number, "error": ""}
+                else:
+                    return {
+                        "success": False,
+                        "id": "",
+                        "chat_id": number,
+                        "error": f"Evolution API HTTP {resp.status_code}: {resp.text}"
+                    }
+
+            # ── 2. Open-Wa ─────────────────────────────────────────────────
+            else:
+                chat_id = normalize_whatsapp_number(to, for_evolution=False)
+                if not chat_id:
+                    raise ValueError("Número de WhatsApp destinatario vacío o inválido")
+
+                payload = {
+                    "to": chat_id,
+                    "chatId": chat_id,
+                    "file": f"data:application/pdf;base64,{b64_data}",
+                    "filename": filename,
+                    "caption": caption or "Boletín Ejecutivo — Universidad de La Sabana"
+                }
+                resp = client.post(f"{url}/sendFile", json=payload, headers=headers)
+
+                if resp.status_code in (200, 201):
+                    data = resp.json()
+                    msg_id = str(data.get("response", data.get("id", ""))) if isinstance(data, dict) else str(data)
+                    return {"success": True, "id": msg_id, "chat_id": chat_id, "error": ""}
+                else:
+                    return {
+                        "success": False,
+                        "id": "",
+                        "chat_id": chat_id,
+                        "error": f"Open-Wa HTTP {resp.status_code}: {resp.text}"
+                    }
+
+    except (httpx.ConnectError, ConnectionRefusedError):
+        return {
+            "success": False,
+            "id": "",
+            "chat_id": to,
+            "error": f"No fue posible conectar con el servidor de WhatsApp en '{url}'."
+        }
+    except Exception as e:
+        return {"success": False, "id": "", "chat_id": to, "error": str(e)}
+

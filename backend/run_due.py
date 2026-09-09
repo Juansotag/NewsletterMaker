@@ -21,7 +21,8 @@ from croniter import croniter
 
 from backend.email_render import render_email_html
 from backend.whatsapp_render import render_whatsapp_text
-from backend.whatsapp_client import send_whatsapp_text
+from backend.whatsapp_client import send_whatsapp_text, send_whatsapp_document
+from backend.pdf_generator import generate_newsletter_pdf
 from backend.main import resolve_doc_references, extract_json, build_user_message, DEFAULT_SYSTEM_PROMPT_TEMPLATE
 
 
@@ -210,6 +211,23 @@ async def run_due_schedules():
                 if res.get("success"):
                     whatsapp_id = res.get("id", "")
                     print(f"[run_due] WhatsApp enviado a {target} (id={whatsapp_id})")
+                    # Enviar PDF adjunto
+                    try:
+                        pdf_bytes = generate_newsletter_pdf(newsletter)
+                        clean_fecha = newsletter.get("fecha") or datetime.date.today().isoformat()
+                        pdf_filename = f"Radar_Ejecutivo_{clean_fecha}.pdf"
+                        pdf_res = send_whatsapp_document(
+                            target,
+                            pdf_bytes,
+                            filename=pdf_filename,
+                            caption=f"📄 {titulo} — Universidad de La Sabana"
+                        )
+                        if pdf_res.get("success"):
+                            print(f"[run_due] PDF adjunto enviado a {target}")
+                        else:
+                            print(f"[run_due] Aviso enviando PDF: {pdf_res.get('error')}")
+                    except Exception as pe:
+                        print(f"[run_due] Error generando/enviando PDF adjunto: {pe}")
                 else:
                     print(f"[run_due] Error enviando WhatsApp a {target}: {res.get('error')}")
             except Exception as e:

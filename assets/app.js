@@ -1401,8 +1401,13 @@ async function deleteReport(id) {
   }
 }
 
-/** Exporta el newsletter a PDF usando el motor de impresión nativo del navegador */
+/** Exporta el newsletter a PDF (descarga PDF ejecutivo o usa impresión si es borrador) */
 function downloadPDF(containerId, btnEl) {
+  if (containerId === 'histOutput' && _histActiveId) {
+    window.open(`/api/reports/${_histActiveId}/pdf`, '_blank');
+    return;
+  }
+
   const el = document.getElementById(containerId);
   if (!el) {
     alert('No hay ningún newsletter seleccionado para exportar.');
@@ -1410,12 +1415,11 @@ function downloadPDF(containerId, btnEl) {
   }
 
   const titleEl = el.querySelector('.nl-title');
-  const title = titleEl ? titleEl.textContent.trim() : 'Newsletter Ejecutivo GovLab';
+  const title = titleEl ? titleEl.textContent.trim() : 'Newsletter Ejecutivo Unisabana';
   const cleanTitle = title.replace(/[^a-z0-9áéíóúÁÉÍÓÚñÑ\s]/gi, '').trim() || 'Newsletter_Ejecutivo';
   const originalTitle = document.title;
 
   document.title = `${cleanTitle} - ${new Date().toISOString().slice(0, 10)}`;
-
   window.print();
 
   setTimeout(() => {

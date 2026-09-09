@@ -10,3 +10,4 @@ supabase>=2.0
 croniter>=2.0
 resend>=2.0
 apscheduler>=3.10
+reportlab>=4.0.0

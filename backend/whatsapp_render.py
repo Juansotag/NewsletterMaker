@@ -11,15 +11,30 @@ def clean_text(s: object) -> str:
     if s is None:
         return ""
     txt = str(s).strip()
-    # Eliminar saltos de línea excesivos dentro de un mismo párrafo
     txt = re.sub(r'\n{3,}', '\n\n', txt)
     return txt
 
 
+def clean_url(url: object) -> str:
+    """Limpia la URL eliminando comillas, paréntesis u otros signos de puntuación residuales."""
+    if not url:
+        return ""
+    u = str(url).strip()
+    u = re.sub(r'^[<\(\[\"\'\s]+', '', u)
+    u = re.sub(r'[>\)\]\"\'\s\.,;]+$', '', u)
+    if not u.startswith("http://") and not u.startswith("https://"):
+        if u.startswith("www."):
+            u = "https://" + u
+        elif "." in u and not u.startswith("@"):
+            u = "https://" + u
+    return u
+
+
 def render_whatsapp_text(newsletter: dict) -> str:
     """
-    Convierte el dict del newsletter en un texto formateado para WhatsApp,
-    coincidiendo exactamente con el formato ejecutivo de referencia.
+    Convierte el dict del newsletter en un texto formateado para WhatsApp.
+    Usa negrita nativa (*texto*) y URLs limpias sin corchetes ni paréntesis,
+    garantizando que WhatsApp las reconozca como enlaces interactivos y no generen 404.
     """
     d = newsletter if isinstance(newsletter, dict) else {}
 
@@ -33,7 +48,6 @@ def render_whatsapp_text(newsletter: dict) -> str:
     lines.append("*Universidad de La Sabana*")
     lines.append(f"*{titulo}*")
     
-    meta_parts = []
     if fecha and contexto:
         lines.append(f"{fecha} - {contexto}")
     elif fecha:
@@ -55,18 +69,18 @@ def render_whatsapp_text(newsletter: dict) -> str:
             dato   = clean_text(c.get("dato") or c.get("cifra") or "")
             ctx_c  = clean_text(c.get("contexto") or c.get("descripcion") or "")
             fuente = clean_text(c.get("fuente") or c.get("medio") or "")
-            url_c  = clean_text(c.get("url") or c.get("link") or "")
+            url_c  = clean_url(c.get("url") or c.get("link") or "")
 
             if dato:
                 lines.append(f"*{dato}*")
             if ctx_c:
                 lines.append(ctx_c)
             if fuente and url_c:
-                lines.append(f"[{fuente} ↗]({url_c})")
+                lines.append(f"🔗 Fuente ({fuente}): {url_c}")
             elif url_c:
-                lines.append(f"[{url_c} ↗]({url_c})")
+                lines.append(f"🔗 Enlace: {url_c}")
             elif fuente:
-                lines.append(f"_{fuente}_")
+                lines.append(f"Fuente: _{fuente}_")
             lines.append("")
 
     # ── Ítems Principales por Eje ────────────────────────────────────────────
@@ -80,27 +94,22 @@ def render_whatsapp_text(newsletter: dict) -> str:
             resumen   = clean_text(it.get("resumen") or it.get("contenido") or "")
             pqi       = clean_text(it.get("por_que_importa") or it.get("importancia") or "")
             fuente_i  = clean_text(it.get("fuente") or "")
-            url_i     = clean_text(it.get("url") or it.get("link") or "")
+            url_i     = clean_url(it.get("url") or it.get("link") or "")
 
             if eje:
                 lines.append(f"*{eje}*")
-            if titular and url_i:
-                lines.append(f"[{titular}]({url_i})")
-            elif titular:
+            if titular:
                 lines.append(f"*{titular}*")
-
             if resumen:
                 lines.append(resumen)
-
             if pqi:
                 lines.append(f"*Por qué importa:* {pqi}")
-
             if fuente_i and url_i:
-                lines.append(f"Fuente: [{fuente_i} ↗]({url_i})")
+                lines.append(f"🔗 Fuente ({fuente_i}): {url_i}")
+            elif url_i:
+                lines.append(f"🔗 Enlace: {url_i}")
             elif fuente_i:
                 lines.append(f"Fuente: _{fuente_i}_")
-            elif url_i:
-                lines.append(f"Enlace: {url_i}")
 
             lines.append("")  # Separador entre ítems
 
@@ -115,16 +124,20 @@ def render_whatsapp_text(newsletter: dict) -> str:
             elif isinstance(o, dict):
                 texto    = clean_text(o.get("texto") or o.get("text") or o.get("descripcion") or "")
                 fuente_o = clean_text(o.get("fuente") or "")
-                url_o    = clean_text(o.get("url") or o.get("link") or "")
+                url_o    = clean_url(o.get("url") or o.get("link") or "")
 
+                link_part = ""
                 if fuente_o and url_o:
-                    lines.append(f"{texto} — [{fuente_o} ↗]({url_o})")
+                    link_part = f" — 🔗 {fuente_o}: {url_o}"
                 elif url_o:
-                    lines.append(f"{texto} — [{url_o} ↗]({url_o})")
+                    link_part = f" — 🔗 {url_o}"
                 elif fuente_o:
-                    lines.append(f"{texto} — _{fuente_o}_")
-                elif texto:
-                    lines.append(f"{texto}")
+                    link_part = f" — _{fuente_o}_"
+
+                if texto:
+                    lines.append(f"{texto}{link_part}")
+                elif link_part:
+                    lines.append(link_part.lstrip(" — "))
         lines.append("")
 
     return "\n".join(lines).strip()

@@ -27,7 +27,8 @@ except ImportError:
 
 from backend.email_render import render_email_html
 from backend.whatsapp_render import render_whatsapp_text
-from backend.whatsapp_client import send_whatsapp_text, check_whatsapp_status, normalize_whatsapp_number
+from backend.whatsapp_client import send_whatsapp_text, send_whatsapp_document, check_whatsapp_status, normalize_whatsapp_number
+from backend.pdf_generator import generate_newsletter_pdf
 
 app = FastAPI(title="Newsletter Ejecutivo GovLab")
 
@@ -246,8 +247,7 @@ REGLAS OBLIGATORIAS:
 - 'cifras': Incluye SIEMPRE entre 2 y 4 cifras o estadísticas concretas encontradas en las búsquedas con su URL.
 - 'items': Incluye EXACTAMENTE el número de ítems solicitados por la configuración (1 ítem por cada eje temático indicado).
 - 'oportunidades': Incluye SIEMPRE entre 2 y 4 oportunidades o convocatorias reales con fecha de cierre y URL verificable.
-- TONO: ejecutivo y directo, español de Colombia, sin relleno. Vocabulario: ecosistemas, co-creación, transferencia, impacto tangible, alianzas multisector, vinculación empresarial.
-- VERACIDAD: usa solo lo encontrado en las búsquedas. No inventes datos, cifras, fechas ni URLs.
+- VERACIDAD Y URLs: Usa solo lo encontrado en las búsquedas. En los campos 'url', copia y pega EXACTAMENTE las URLs reales devueltas por la herramienta web_search. NUNCA inventes, modifiques ni supongas URLs o slugs (ej. NO inventes '/convocatoria-2026' si no apareció exactamente así). Si un portal no tiene subpágina específica en los resultados, coloca la URL principal del sitio oficial (ej. 'https://minciencias.gov.co'). Toda URL debe iniciar con 'https://' y ser 100% navegable.
 
 ────────────────────────────────────────────────────────────────────────────────
 CONTEXTO INSTITUCIONAL:
@@ -724,6 +724,34 @@ def delete_report(report_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/reports/{report_id}/pdf")
+def download_report_pdf(report_id: str):
+    """Genera y descarga el PDF ejecutivo de un reporte guardado."""
+    if not supabase_client:
+        raise HTTPException(status_code=500, detail="Supabase client not initialized")
+    try:
+        response = supabase_client.table("reports").select("*").eq("id", report_id).execute()
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Reporte no encontrado")
+        rep = response.data[0]
+        newsletter = rep.get("newsletter") or {}
+        pdf_bytes = generate_newsletter_pdf(newsletter)
+        
+        fecha = newsletter.get("fecha") or rep.get("created_at", "")[:10] or "reporte"
+        filename = f"Radar_Ejecutivo_{fecha}.pdf"
+        
+        import io
+        return StreamingResponse(
+            io.BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generando PDF: {str(e)}")
+
+
 # ─── Helpers de scheduling ─────────────────────────────────────────────────
 def _calc_next_run(cron_expr: str) -> str:
     """Retorna el próximo datetime UTC para la expresión cron dada."""
@@ -948,7 +976,7 @@ async def _execute_schedule_job(schedule_id: str, api_key: str):
         SCHEDULE_JOBS[schedule_id]["step"] = "Formateando newsletter para WhatsApp..."
         whatsapp_text = render_whatsapp_text(newsletter)
 
-        # Enviar WhatsApp
+        # Enviar WhatsApp (Texto enriquecido)
         whatsapp_id = ""
         whatsapp_error = ""
         if target:
@@ -958,11 +986,34 @@ async def _execute_schedule_job(schedule_id: str, api_key: str):
                 if res.get("success"):
                     whatsapp_id = res.get("id", "")
                 else:
-                    whatsapp_error = res.get("error", "Error desconocido enviando por WhatsApp")
+                    whatsapp_error = res.get("error", "Error desconocido enviando texto por WhatsApp")
             except Exception as we:
                 whatsapp_error = str(we)
         else:
             whatsapp_error = "No hay número de WhatsApp configurado"
+
+        # Enviar Documento PDF adjunto vía WhatsApp
+        pdf_id = ""
+        pdf_error = ""
+        if target and not whatsapp_error:
+            try:
+                SCHEDULE_JOBS[schedule_id]["step"] = "Generando y enviando documento PDF ejecutivo por WhatsApp..."
+                pdf_bytes = generate_newsletter_pdf(newsletter)
+                clean_fecha = newsletter.get("fecha") or datetime.date.today().isoformat()
+                pdf_filename = f"Radar_Ejecutivo_{clean_fecha}.pdf"
+                pdf_res = send_whatsapp_document(
+                    target,
+                    pdf_bytes,
+                    filename=pdf_filename,
+                    caption=f"📄 {titulo} — Universidad de La Sabana"
+                )
+                if pdf_res.get("success"):
+                    pdf_id = pdf_res.get("id", "")
+                else:
+                    pdf_error = pdf_res.get("error", "")
+                    print(f"[schedule_job] Aviso enviando PDF adjunto: {pdf_error}")
+            except Exception as pe:
+                print(f"[schedule_job] Error generando/enviando PDF adjunto: {pe}")
 
         # Guardar reporte en Supabase
         report_id = None
@@ -992,10 +1043,12 @@ async def _execute_schedule_job(schedule_id: str, api_key: str):
 
         SCHEDULE_JOBS[schedule_id] = {
             "status": "completed",
-            "step": "✓ Proceso completado exitosamente",
+            "step": "✓ Proceso completado exitosamente (Texto + PDF enviados)",
             "titulo": titulo,
             "whatsapp_id": whatsapp_id,
             "whatsapp_error": whatsapp_error,
+            "pdf_id": pdf_id,
+            "pdf_error": pdf_error,
             "report_id": report_id,
             "completed_at": datetime.datetime.utcnow().isoformat(),
         }
