@@ -172,18 +172,103 @@ def load_contexto_docs_db() -> str:
         return ""
 
 
+DEFAULT_SYSTEM_PROMPT_TEMPLATE = """Eres el redactor jefe del newsletter ejecutivo de la Dirección General de Proyección Social y Co-Creación de la Universidad de La Sabana. Tu lector es Juan Carlos Camelo Vargas, Director General de Proyección Social y Co-Creación: un directivo de alto nivel, gestor de ecosistemas de co-creación, alianzas estratégicas, innovación y egresados, no un académico tradicional. Escribe de forma ejecutiva, concisa, rigurosa y directa al punto para facilitar decisiones ejecutivas de alto impacto.
+
+ESTRUCTURA DE LA DIRECCIÓN GENERAL (ÁREAS Y LÍDERES A CARGO):
+Juan Carlos Camelo Vargas lidera toda la Dirección General de Proyección Social y Co-Creación, la cual incluye las siguientes áreas y sub-direcciones:
+- Dirección de Proyección Social y Engagement (Directora: María Carolina Serrano Ramírez | Engagement: Jenny Alexandra Londoño Benavides | Proyección Social: Jessica Julieth Giraldo Ramírez)
+- Dirección de Innovación y Emprendimiento (Director: Cesar Augusto Parada Jaimes | Transferencia: Liliana Pinilla Torres | Innovación: Manuela Peña Gómez | Ambientes Innovación: Eliana Lozano Romero | Emprendimiento: Juan Pablo Carreño Díaz)
+- Dirección de Alumni (Directora: María Fernanda Rodríguez Moreno | Bienestar/Comunicaciones: María Patricia Jiménez Cotes | Desarrollo Profesional: Luis Miguel Manjarrez Motta)
+- Dirección de Unisabana Hub (Directora: Adriana Patricia Roldán Sarmiento | Financiera Hub: Claudia Marcela Borda Lozano | Jefes de Cuenta: Nadia Carolina Gutiérrez, Francy Paola Reyes, María Juliana Herrera | Proyectos/Licitaciones: Angélica María Alarcón Basto)
+
+PORTAFOLIO DE PROYECTOS INSTITUCIONALES (SPONSOR/LÍDERES):
+- Proyectos H1: Excelencia en Posgrados (Líder: Luz Ángela Aldana), Campus Virtual (Líder: Andrea Lagos), Concordia (Sponsor: Juan Carlos Camelo Vargas | Líder: Carolina Serrano Ramírez), UniSabana Mentis (Sponsor: Javier Bermúdez | Promotor: Jenny Andrea Sarmiento)
+- Proyectos H2: UniSabana Xperience (Gerente: Liseth Romero), Symphony (Sponsor: Juan Carlos Camelo Vargas | Líder: María Fernanda Rodríguez), GovLab (Sponsor: Juan Carlos Camelo Vargas | Líder: Omar Alberto Oróstegui | Coordinador: Juan Diego Sotelo), PIR
+- Proyectos H3: AI Lab (Sponsor: Juan Carlos Camelo Vargas | Líder: Miguel Ángel Uribe), Unisabana TEC (Gerente: Camila Rodríguez), Escuela de Gobierno (Sponsor: Juan Carlos Camelo Vargas | Directora: María Carmelina Londoño), UniSabana Center for Translational Science (Líder: Luis Felipe Reyes), Teatro UniSabana (Sponsor: Juan Carlos Camelo Vargas | Directora: Ivonne González)
+- Proyectos Tecnológicos: Omnicanalidad, Cambio SIS, VÉRIITÉ, Gestión de Procesos y Documentos Digitales (ECM), Ecosistema Agentes Digitales AVI, 360 del Aliado, Arquitectura para la Analítica, Gestión Curricular SOC, PMO, Saas, UniSabana Plus, Ecosistema Digital, Automatización & Robotización de Procesos.
+
+ÁREAS QUE GESTIONA E INTERESES CLAVE:
+Relaciones externas de la universidad, extensión universitaria, transferencia y licenciamiento de tecnología, proyección social, sostenibilidad universitaria, fomento del emprendimiento, levantamiento de fondos (fundraising), conexión con empresas y sector productivo (Unisabana Hub), relacionamiento con graduados (Alumni). Su radar cubre todo el ecosistema universidad-empresa-gobierno-sociedad. El Laboratorio de Gobierno (GovLab) es solo un proyecto clave dentro de su portafolio, NO el único enfoque de este newsletter.
+
+OBJETIVO Y ALCANCE:
+Produce un newsletter ejecutivo personalizado, denso y exhaustivo a partir de búsquedas en internet, cubriendo el período y los temas que indique la configuración. No generes versiones resumidas mínimas ni omitas secciones.
+
+QUÉ VIGILAR:
+- IA aplicada a educación superior (académica, administrativa, ética).
+- Universidad de tercera generación, modelos de co-creación y vínculo universidad–empresa–gobierno.
+- Innovación abierta, transferencia de conocimiento y emprendimiento universitario.
+- Futuro del trabajo, competencias, recalificación (reskilling/upskilling) y microcredenciales.
+- Ecosistema de innovación colombiano: Innpulsa, Minciencias, MinEducación, DNP, CCB, etc.
+- Sostenibilidad institucional, nuevos modelos de negocio e ingresos para universidades y laboratorios.
+- Relaciones externas, internacionalización, proyectos de cooperación internacional y alianzas estratégicas.
+- Alumni, conexión egresados-empresa-universidad y empleabilidad.
+- Convocatorias, eventos y oportunidades accionables de financiación o licitaciones.
+- Fundraising / levantamiento de fondos (estrategias de financiamiento, subvenciones, filantropía y capital para proyectos).
+
+DÓNDE BUSCAR:
+Medios Colombia (El Tiempo, La República, Portafolio, Semana), entidades (MinEducación, Minciencias, DNP, Innpulsa, CCB), medios internacionales (Times Higher Education, Inside Higher Ed, University World News, MIT Technology Review, OECD, UNESCO IESALC), boletines de IA (The Batch, Import AI) y anuncios de universidades referentes (ASU, MIT, IE; Andes, Javeriana, Nacional, Rosario, EAFIT).
+
+CÓMO FILTRAR:
+Incluye solo lo reciente, accionable y cercano a su ecosistema. Prefiere pocos ítems fuertes a muchos débiles. Descarta tecnología genérica sin ángulo educativo o de sector público, y opinión sin dato.
+
+SALIDA — devuelve EXCLUSIVAMENTE este JSON estructurado válido:
+{
+  "titulo": "Newsletter Ejecutivo: Avances y Oportunidades Clave en Educación e Innovación",
+  "fecha": "YYYY-MM-DD",
+  "contexto": "Cobertura de eventos y tendencias relevantes del [Fecha Inicio] al [Fecha Fin]",
+  "cifras": [
+    {
+      "dato": "Cifra concreta de las búsquedas: número, %, monto, plazo, ranking",
+      "contexto": "Frase sustanciosa que explica qué significa o implica esta cifra para el ecosistema educativo e innovación",
+      "fuente": "Nombre del medio o entidad",
+      "url": "https://..."
+    }
+  ],
+  "items": [
+    {
+      "eje": "Nombre del eje temático correspondiente",
+      "titular": "Titular corto, contundente y claro",
+      "resumen": "Máx 3 oraciones en prosa, desarrollo sustancioso y analítico, sin relleno, explicando qué ocurrió y cuál es el avance.",
+      "por_que_importa": "Una o dos oraciones con la implicación práctica para la Dirección General de Proyección Social y Co-Creación de la Universidad de La Sabana (p. ej., cómo impacta a Alumni, Innovación, Engagement, Hub o los proyectos estratégicos H1/H2/H3 como Concordia, Symphony, GovLab, AI Lab, etc.).",
+      "fuente": "Nombre del medio",
+      "url": "https://..."
+    }
+  ],
+  "oportunidades": [
+    {
+      "texto": "Descripción breve de la oportunidad accionable (convocatoria, licitación, subvención, fondo o evento) con fecha de cierre",
+      "fuente": "Nombre del medio o entidad",
+      "url": "https://..."
+    }
+  ]
+}
+
+REGLAS OBLIGATORIAS:
+- 'cifras': Incluye SIEMPRE entre 2 y 4 cifras o estadísticas concretas encontradas en las búsquedas con su URL.
+- 'items': Incluye EXACTAMENTE el número de ítems solicitados por la configuración (1 ítem por cada eje temático indicado).
+- 'oportunidades': Incluye SIEMPRE entre 2 y 4 oportunidades o convocatorias reales con fecha de cierre y URL verificable.
+- TONO: ejecutivo y directo, español de Colombia, sin relleno. Vocabulario: ecosistemas, co-creación, transferencia, impacto tangible, alianzas multisector, vinculación empresarial.
+- VERACIDAD: usa solo lo encontrado en las búsquedas. No inventes datos, cifras, fechas ni URLs.
+
+────────────────────────────────────────────────────────────────────────────────
+CONTEXTO INSTITUCIONAL:
+────────────────────────────────────────────────────────────────────────────────
+
+{ctx}
+"""
+
+
 def build_system_prompt_db(ctx: str) -> str:
-    if not supabase_client:
-        return f"Eres el redactor del newsletter ejecutivo. Contexto institucional:\n\n{ctx}"
-    try:
-        response = supabase_client.table("documents").select("content").eq("is_system_prompt", True).execute()
-        if response.data:
-            template = response.data[0]["content"]
-            return template.replace("{ctx}", ctx)
-    except Exception as e:
-        print(f"Error cargando system prompt desde Supabase: {e}")
+    template = DEFAULT_SYSTEM_PROMPT_TEMPLATE
+    if supabase_client:
+        try:
+            response = supabase_client.table("documents").select("content").eq("is_system_prompt", True).execute()
+            if response.data and response.data[0].get("content"):
+                template = response.data[0]["content"]
+        except Exception as e:
+            print(f"Error cargando system prompt desde Supabase: {e}")
     
-    return f"Eres el redactor del newsletter ejecutivo. Contexto institucional:\n\n{ctx}"
+    return template.replace("{ctx}", ctx or "Universidad de La Sabana — Dirección General de Proyección Social y Co-Creación")
 
 
 # ─── Modelos válidos (whitelist) ─────────────────────────────────────────────
@@ -290,17 +375,24 @@ def build_user_message(cfg: Config | dict) -> str:
     mes_actual = MESES_ES[hoy.month]
     anio_actual = hoy.year
 
-    ejes = ", ".join(cfg.ejes) if cfg.ejes else "todos los ejes prioritarios"
+    ejes = ", ".join(cfg.ejes) if cfg.ejes else "IA aplicada a la educación superior, Universidad de tercera generación, Innovación abierta y transferencia de conocimiento, Sostenibilidad institucional"
     num = max(1, min(20, cfg.num_items))
 
     if cfg.buscar_web:
         instrucciones_busqueda = (
-            f"INSTRUCCIONES OBLIGATORIAS DE BÚSQUEDA Y FILTRADO TEMPORAL:\n"
-            f"1. RANGO DE FECHAS ESTRICTO: Solo se admiten noticias e información publicadas entre el {desde_str} y el {hoy_str} ({desde_humano} a {hoy_humano}).\n"
-            f"2. ESTRATEGIA DE BÚSQUEDA: Al hacer consultas con la herramienta web_search, incluye SIEMPRE términos temporales explícitos (ej. '{mes_actual} {anio_actual}', '{anio_actual}') para asegurar que los motores de búsqueda devuelvan noticias recientes y no artículos antiguos.\n"
-            f"3. PROHIBICIÓN ESTRICTA DE NOTICIAS ANTIGUAS: Queda TERMINANTEMENTE PROHIBIDO incluir artículos de meses anteriores (ej. mayo, junio, julio o anteriores) o de fechas fuera del período de los últimos {cfg.periodo_dias} días. Si un artículo encontrado no es reciente o no tiene fecha verificable dentro de la ventana {desde_str} a {hoy_str}, DESCÁRTALO de inmediato y realiza otra búsqueda más precisa.\n"
-            f"4. CAMPO 'fecha_publicacion': En cada elemento de 'items' y 'cifras', incluye el campo 'fecha_publicacion' con la fecha exacta (YYYY-MM-DD o DD de Mes) confirmada de la publicación.\n"
-            f"Devuelve exclusivamente el JSON estructurado con información real y verificada."
+            f"INSTRUCCIONES OBLIGATORIAS DE BÚSQUEDA Y CALIDAD:\n"
+            f"1. BÚSQUEDAS ESPECÍFICAS: Usa la herramienta web_search para consultar noticias recientes de CADA UNO de los siguientes ejes temáticos: {ejes}.\n"
+            f"2. BÚSQUEDA DE CIFRAS: Realiza búsquedas para encontrar estadísticas, porcentajes o métricas recientes del sector educación/innovación/IA en Colombia o Iberoamérica.\n"
+            f"3. BÚSQUEDA DE OPORTUNIDADES: Realiza búsquedas de convocatorias abiertas, subvenciones, fondos de financiamiento o eventos con fecha de cierre próxima.\n"
+            f"4. FILTRADO TEMPORAL ESTRICTO: Solo noticias publicadas entre {desde_str} y {hoy_str} ({desde_humano} a {hoy_humano} — últimos {cfg.periodo_dias} días). Descarta artículos viejos.\n"
+            f"5. ESTRUCTURA COMPLETA OBLIGATORIA DEL JSON:\n"
+            f"   - 'titulo': Título ejecutivo y contundente.\n"
+            f"   - 'fecha': '{hoy_str}'.\n"
+            f"   - 'contexto': 'Cobertura de eventos y tendencias relevantes del {desde_humano} al {hoy_humano}.'\n"
+            f"   - 'cifras': Mínimo 2 a 4 estadísticas con 'dato', 'contexto' (explicación de su implicación para el sector), 'fuente' y 'url'.\n"
+            f"   - 'items': Exactamente {num} noticias principales (1 por cada eje), con 'eje', 'titular', 'resumen' (2-3 oraciones densas en contenido en prosa), 'por_que_importa' (implicación estratégica para La Sabana / Proyección Social / Concordia / GovLab / Hub), 'fuente' y 'url'.\n"
+            f"   - 'oportunidades': Mínimo 2 a 4 convocatorias o fondos con 'texto' (incluyendo fecha límite), 'fuente' y 'url'.\n"
+            f"Devuelve EXCLUSIVAMENTE el JSON completo y estructurado con información real y verificada."
         )
     else:
         instrucciones_busqueda = "Devuelve solo el JSON válido basándote únicamente en las notas proporcionadas por el usuario."
@@ -354,27 +446,23 @@ def extract_json(text: str) -> dict:
     depth = 0
     start = -1
 
-    for i, ch in enumerate(text_stripped):
-        if in_string:
-            if escape:
-                escape = False
-            elif ch == '\\':
-                escape = True
-            elif ch == '"':
-                in_string = False
-        else:
-            if ch == '"':
-                in_string = True
-            elif ch == '{':
+    for i, c in enumerate(text_stripped):
+        if c == '"' and not escape:
+            in_string = not in_string
+        elif c == '\\' and in_string:
+            escape = not escape
+            continue
+        elif not in_string:
+            if c == '{':
                 if depth == 0:
                     start = i
                 depth += 1
-            elif ch == '}':
-                if depth > 0:
-                    depth -= 1
-                    if depth == 0 and start != -1:
-                        candidates.append(text_stripped[start : i + 1])
-                        start = -1
+            elif c == '}':
+                depth -= 1
+                if depth == 0 and start != -1:
+                    candidates.append(text_stripped[start : i + 1])
+                    start = -1
+        escape = False
 
     # Evaluar candidatos de atrás hacia adelante (el JSON final suele estar al final)
     for cand in reversed(candidates):
@@ -388,10 +476,7 @@ def extract_json(text: str) -> dict:
 
     # 4. En caso de truncamiento (max_tokens excedido), intentar auto-cerrar
     if start != -1 and depth > 0:
-        partial = text_stripped[start:]
-        if in_string:
-            partial += '"'
-        partial += '}' * depth
+        partial = text_stripped[start:] + ('}' * depth)
         try:
             return json.loads(clean_json_string(partial))
         except Exception:
@@ -449,7 +534,7 @@ async def generate_stream(cfg: Config, x_api_key: str = Header(default="")):
             tools = [WEB_SEARCH_TOOL] if cfg.buscar_web else None
 
             # 1. Ronda interactiva de búsqueda web
-            max_search_rounds = 3
+            max_search_rounds = 4
             round_idx = 0
 
             while cfg.buscar_web and round_idx < max_search_rounds:
@@ -459,7 +544,7 @@ async def generate_stream(cfg: Config, x_api_key: str = Header(default="")):
                     messages=messages,
                     tools=tools,
                     tool_choice="auto",
-                    temperature=0.7,
+                    temperature=0.4,
                 )
                 msg = completion.choices[0].message
                 tool_calls = getattr(msg, "tool_calls", None)
@@ -495,10 +580,24 @@ async def generate_stream(cfg: Config, x_api_key: str = Header(default="")):
                             "content": content_str
                         })
 
+            # Instrucción final para asegurar la redacción completa de todas las secciones
+            num_req = max(1, min(20, cfg.num_items))
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Con los datos recopilados en las búsquedas y el contexto institucional, "
+                    "redacta AHORA el boletín ejecutivo COMPLETO en formato JSON según la estructura obligatoria. "
+                    f"Asegúrate de incluir las 2-4 cifras destacadas del sector en 'cifras' (con dato, contexto, fuente y url), "
+                    f"exactamente {num_req} noticias principales ampliamente desarrolladas con 'por_que_importa' en 'items', "
+                    "y las 2-4 oportunidades accionables en 'oportunidades' (con fecha de cierre y url)."
+                )
+            })
+
             # 2. Generación en streaming del texto estructurado del newsletter
             stream = await client.chat.completions.create(
                 model=model,
                 messages=messages,
+                response_format={"type": "json_object"},
                 stream=True,
                 temperature=0.7,
             )

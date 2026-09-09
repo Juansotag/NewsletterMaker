@@ -22,7 +22,7 @@ from croniter import croniter
 from backend.email_render import render_email_html
 from backend.whatsapp_render import render_whatsapp_text
 from backend.whatsapp_client import send_whatsapp_text
-from backend.main import resolve_doc_references, extract_json, build_user_message
+from backend.main import resolve_doc_references, extract_json, build_user_message, DEFAULT_SYSTEM_PROMPT_TEMPLATE
 
 
 # ── Clientes ──────────────────────────────────────────────────────────────────
@@ -56,34 +56,38 @@ async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str
     client = openai.AsyncOpenAI(api_key=key)
 
     # System prompt
-    try:
-        sys_resp = supabase.table("documents").select("content").eq("is_system_prompt", True).execute()
-        sp_template = sys_resp.data[0]["content"] if sys_resp.data else "{ctx}"
-    except Exception:
-        sp_template = "{ctx}"
+    sp_template = DEFAULT_SYSTEM_PROMPT_TEMPLATE
+    if supabase:
+        try:
+            sys_resp = supabase.table("documents").select("content").eq("is_system_prompt", True).execute()
+            if sys_resp.data and sys_resp.data[0].get("content"):
+                sp_template = sys_resp.data[0]["content"]
+        except Exception:
+            sp_template = DEFAULT_SYSTEM_PROMPT_TEMPLATE
 
     try:
         ctx_resp = supabase.table("documents").select(
             "folder, name, content, description, tag_context"
-        ).eq("is_system_prompt", False).order("sort_order").execute()
+        ).eq("is_system_prompt", False).order("sort_order").execute() if supabase else None
         docs = []
-        for doc in ctx_resp.data:
-            tag = (doc.get("tag_context") or "always").strip().lower()
-            if tag == "excluded":
-                continue
-            folder = doc.get("folder", "")
-            name   = doc.get("name", "")
-            cont   = doc.get("content", "").strip()
-            cont   = resolve_doc_references(cont, loading_stack=[name])
-            desc   = doc.get("description", "").strip()
-            path   = f"{folder}/{name}" if folder else name
-            use_l  = f"USO: {desc}\n" if desc else ""
-            docs.append(f"### [{path}]\n{use_l}{cont}")
+        if ctx_resp and ctx_resp.data:
+            for doc in ctx_resp.data:
+                tag = (doc.get("tag_context") or "always").strip().lower()
+                if tag == "excluded":
+                    continue
+                folder = doc.get("folder", "")
+                name   = doc.get("name", "")
+                cont   = doc.get("content", "").strip()
+                cont   = resolve_doc_references(cont, loading_stack=[name])
+                desc   = doc.get("description", "").strip()
+                path   = f"{folder}/{name}" if folder else name
+                use_l  = f"USO: {desc}\n" if desc else ""
+                docs.append(f"### [{path}]\n{use_l}{cont}")
         ctx_text = "\n\n---\n\n".join(docs)
     except Exception:
         ctx_text = ""
 
-    system_prompt = sp_template.replace("{ctx}", ctx_text)
+    system_prompt = sp_template.replace("{ctx}", ctx_text or "Universidad de La Sabana — Dirección General de Proyección Social y Co-Creación")
     user_msg = build_user_message(config)
 
     model = config.get("model", "gpt-4o")
@@ -99,7 +103,7 @@ async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str
     search_queries: list[str] = []
 
     # Ronda de búsqueda web si está activada
-    max_search_rounds = 3
+    max_search_rounds = 4
     round_idx = 0
 
     while config.get("buscar_web", True) and round_idx < max_search_rounds:
@@ -109,7 +113,7 @@ async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str
             messages=messages,
             tools=tools,
             tool_choice="auto",
-            temperature=0.7,
+            temperature=0.4,
         )
         msg = completion.choices[0].message
         tool_calls = getattr(msg, "tool_calls", None)
@@ -140,11 +144,25 @@ async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str
                     "content": content_str
                 })
 
+    # Instrucción final para redacción completa
+    num_req = config.get("num_items", 4)
+    messages.append({
+        "role": "user",
+        "content": (
+            "Con los datos recopilados en las búsquedas y el contexto institucional, "
+            "redacta AHORA el boletín ejecutivo COMPLETO en formato JSON según la estructura obligatoria. "
+            f"Asegúrate de incluir las 2-4 cifras destacadas del sector en 'cifras' (con dato, contexto, fuente y url), "
+            f"exactamente {num_req} noticias principales ampliamente desarrolladas con 'por_que_importa' en 'items', "
+            "y las 2-4 oportunidades accionables en 'oportunidades' (con fecha de cierre y url)."
+        )
+    })
+
     # Generación final estructurada
     final_resp = await client.chat.completions.create(
         model=model,
         messages=messages,
-        temperature=0.7,
+        response_format={"type": "json_object"},
+        temperature=0.4,
     )
     full_text = final_resp.choices[0].message.content or "{}"
     newsletter_json = extract_json(full_text)
