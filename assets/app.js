@@ -1108,13 +1108,13 @@ async function createSchedule() {
   }
 }
 
-/** Dispara una generación + envío inmediato para el schedule dado con streaming SSE */
+/** Dispara una generación + envío en segundo plano para el schedule dado y sondea su progreso */
 async function runScheduleNow(id, btn) {
   const statusEl = document.getElementById(`sched-status-${id}`);
   if (btn) btn.disabled = true;
   if (statusEl) {
     statusEl.style.color = 'var(--text-muted)';
-    statusEl.textContent = 'Iniciando generación con Claude…';
+    statusEl.textContent = 'Iniciando proceso en el servidor…';
   }
 
   try {
@@ -1122,71 +1122,74 @@ async function runScheduleNow(id, btn) {
       method: 'POST',
     });
 
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(err.detail || `Error HTTP ${response.status}`);
+      throw new Error(data.detail || `Error HTTP ${response.status}`);
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let finalResult = null;
+    if (statusEl) {
+      statusEl.style.color = 'var(--text-muted)';
+      statusEl.textContent = 'Conectando con Claude Sonnet…';
+    }
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        try {
-          const ev = JSON.parse(line.slice(6));
-          if (ev.type === 'searching') {
-            if (statusEl) statusEl.textContent = ev.message || `Buscando en la web (${ev.count})…`;
-          } else if (ev.type === 'writing') {
-            if (statusEl) statusEl.textContent = ev.message || 'Redactando newsletter con Claude…';
-          } else if (ev.type === 'status') {
-            if (statusEl) statusEl.textContent = ev.message;
-          } else if (ev.type === 'done') {
-            finalResult = ev;
-          } else if (ev.type === 'error') {
-            throw new Error(ev.error || 'Error en el servidor');
+    // Sondear estado periódicamente
+    const startTime = Date.now();
+    const pollInterval = setInterval(async () => {
+      try {
+        // Timeout de seguridad: 4 minutos
+        if (Date.now() - startTime > 240000) {
+          clearInterval(pollInterval);
+          if (btn) btn.disabled = false;
+          if (statusEl) {
+            statusEl.style.color = 'var(--c-yellow)';
+            statusEl.textContent = 'El proceso continúa ejecutándose en segundo plano. Revisa el historial de reportes en un momento.';
           }
-        } catch (err) {
-          if (err.message && !err.message.includes('JSON')) throw err;
+          return;
         }
-      }
-    }
 
-    if (finalResult) {
-      if (finalResult.whatsapp_error) {
-        if (statusEl) {
-          statusEl.style.color = 'var(--c-yellow)';
-          statusEl.textContent = `Newsletter generado pero aviso de WhatsApp: ${finalResult.whatsapp_error}`;
+        const statusRes = await fetch(`/api/schedules/${id}/status`);
+        if (!statusRes.ok) return;
+
+        const job = await statusRes.json();
+        if (job.status === 'running') {
+          if (statusEl) {
+            statusEl.style.color = 'var(--text-muted)';
+            statusEl.textContent = job.step || 'Generando con Claude Sonnet…';
+          }
+        } else if (job.status === 'completed') {
+          clearInterval(pollInterval);
+          if (btn) btn.disabled = false;
+          if (job.whatsapp_error) {
+            if (statusEl) {
+              statusEl.style.color = 'var(--c-yellow)';
+              statusEl.textContent = `Newsletter generado pero aviso de WhatsApp: ${job.whatsapp_error}`;
+            }
+          } else {
+            if (statusEl) {
+              statusEl.style.color = 'var(--c-green)';
+              statusEl.textContent = `✓ Enviado por WhatsApp exitosamente. Reporte guardado en historial.`;
+            }
+          }
+          await loadSchedules();
+        } else if (job.status === 'failed') {
+          clearInterval(pollInterval);
+          if (btn) btn.disabled = false;
+          if (statusEl) {
+            statusEl.style.color = 'var(--c-red)';
+            statusEl.textContent = `Error: ${job.error || 'Fallo en la ejecución'}`;
+          }
         }
-      } else {
-        if (statusEl) {
-          statusEl.style.color = 'var(--c-green)';
-          statusEl.textContent = `✓ Enviado por WhatsApp exitosamente. Reporte guardado en historial.`;
-        }
+      } catch (err) {
+        console.error('Error sondeando schedule status:', err);
       }
-    } else {
-      if (statusEl) {
-        statusEl.style.color = 'var(--c-green)';
-        statusEl.textContent = `✓ Proceso completado exitosamente.`;
-      }
-    }
-    await loadSchedules();
+    }, 2000);
+
   } catch (e) {
+    if (btn) btn.disabled = false;
     if (statusEl) {
       statusEl.style.color = 'var(--c-red)';
       statusEl.textContent = `Error: ${e.message}`;
     }
-  } finally {
-    if (btn) btn.disabled = false;
   }
 }
 

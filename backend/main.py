@@ -288,6 +288,10 @@ class Config(BaseModel):
     buscar_web: bool = True
     usar_contexto: bool = True
 
+    model_config = {"extra": "ignore"}
+    class Config:
+        extra = "ignore"
+
 
 class DocCreate(BaseModel):
     folder: str = ""
@@ -345,10 +349,16 @@ def format_date_es(d: datetime.date) -> str:
 
 def build_user_message(cfg: Config | dict) -> str:
     if isinstance(cfg, dict):
-        cfg = Config(**cfg)
+        try:
+            # Filtrar solo campos válidos y convertir
+            valid_keys = {"tipo", "ejes", "periodo_dias", "num_items", "audiencia", "notas", "model", "buscar_web", "usar_contexto"}
+            clean_cfg = {k: v for k, v in cfg.items() if k in valid_keys and v is not None}
+            cfg = Config(**clean_cfg)
+        except Exception:
+            cfg = Config()
 
     hoy = datetime.date.today()
-    fecha_desde = hoy - datetime.timedelta(days=cfg.periodo_dias)
+    fecha_desde = hoy - datetime.timedelta(days=cfg.periodo_dias or 7)
     hoy_str = hoy.isoformat()
     desde_str = fecha_desde.isoformat()
     hoy_humano = format_date_es(hoy)
@@ -843,157 +853,204 @@ def toggle_schedule(schedule_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ─── Estado de ejecuciones en segundo plano ──────────────────────────────────
+SCHEDULE_JOBS: dict[str, dict] = {}
+
+
+async def _execute_schedule_job(schedule_id: str, api_key: str):
+    """Ejecuta la generación y envío de un schedule de forma asíncrona en el servidor."""
+    SCHEDULE_JOBS[schedule_id] = {
+        "status": "running",
+        "step": "Iniciando generación con Claude Sonnet...",
+        "started_at": datetime.datetime.utcnow().isoformat(),
+        "error": None,
+        "whatsapp_error": None,
+    }
+
+    try:
+        if not supabase_client:
+            raise RuntimeError("Supabase client no inicializado en el servidor")
+
+        cur = supabase_client.table("schedules").select("*").eq("id", schedule_id).execute()
+        if not cur.data:
+            raise RuntimeError("Schedule no encontrado en Supabase")
+        sched = cur.data[0]
+
+        config  = sched.get("config", {}) or {}
+        target  = sched.get("whatsapp_to") or sched.get("email_to", "")
+        cron    = sched.get("cron", "0 7 * * 1")
+        name    = sched.get("name", "Schedule")
+
+        SCHEDULE_JOBS[schedule_id]["step"] = "Cargando contexto institucional..."
+
+        if config.get("usar_contexto", True):
+            context_docs = load_contexto_docs_db()
+        else:
+            context_docs = "No se incluye contexto institucional."
+        system_prompt = build_system_prompt_db(context_docs)
+        tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 10}] if config.get("buscar_web", True) else []
+
+        model = config.get("model", "claude-sonnet-4-6")
+        if model not in VALID_MODELS:
+            model = "claude-sonnet-4-6"
+
+        client = get_anthropic_client(api_key)
+        full_text = ""
+        search_count = 0
+        search_queries = []
+        current_block_type = ""
+        current_tool_input = ""
+
+        SCHEDULE_JOBS[schedule_id]["step"] = "Buscando noticias recientes en la web con Claude..."
+
+        async with client.messages.stream(
+            model=model,
+            max_tokens=8192,
+            system=system_prompt,
+            tools=tools,
+            messages=[{"role": "user", "content": build_user_message(config)}],
+        ) as stream:
+            async for event in stream:
+                etype = getattr(event, "type", "") or ""
+
+                if etype == "content_block_start":
+                    block = getattr(event, "content_block", None)
+                    current_block_type = getattr(block, "type", "") or ""
+                    current_tool_input = ""
+                    if current_block_type == "tool_use":
+                        search_count += 1
+                        SCHEDULE_JOBS[schedule_id]["step"] = f"Buscando en la web ({search_count})..."
+
+                elif etype == "content_block_delta":
+                    delta = getattr(event, "delta", None)
+                    dtype = getattr(delta, "type", "") or ""
+                    if dtype == "text_delta":
+                        chunk_text = getattr(delta, "text", "")
+                        full_text += chunk_text
+                        if len(full_text) % 500 < len(chunk_text) + 2:
+                            SCHEDULE_JOBS[schedule_id]["step"] = f"Redactando newsletter con Claude ({len(full_text)} caracteres)..."
+                    elif dtype == "input_json_delta":
+                        current_tool_input += getattr(delta, "partial_json", "")
+
+                elif etype == "content_block_stop":
+                    if current_block_type == "tool_use" and current_tool_input:
+                        try:
+                            ti = json.loads(current_tool_input)
+                            q = ti.get("query", "")
+                            if q:
+                                search_queries.append(q)
+                        except Exception:
+                            pass
+                    current_block_type = ""
+                    current_tool_input = ""
+
+        # Extraer JSON final del newsletter
+        newsletter = extract_json(full_text)
+        titulo = newsletter.get("titulo", name)
+
+        SCHEDULE_JOBS[schedule_id]["step"] = "Formateando newsletter para WhatsApp..."
+        whatsapp_text = render_whatsapp_text(newsletter)
+
+        # Enviar WhatsApp
+        whatsapp_id = ""
+        whatsapp_error = ""
+        if target:
+            SCHEDULE_JOBS[schedule_id]["step"] = f"Enviando mensaje a {target} vía WhatsApp..."
+            try:
+                res = send_whatsapp_text(target, whatsapp_text)
+                if res.get("success"):
+                    whatsapp_id = res.get("id", "")
+                else:
+                    whatsapp_error = res.get("error", "Error desconocido enviando por WhatsApp")
+            except Exception as we:
+                whatsapp_error = str(we)
+        else:
+            whatsapp_error = "No hay número de WhatsApp configurado"
+
+        # Guardar reporte en Supabase
+        report_id = None
+        try:
+            rep = supabase_client.table("reports").insert({
+                "titulo":         titulo,
+                "origen":         "programado",
+                "config":         config,
+                "newsletter":     newsletter,
+                "search_queries": search_queries,
+            }).execute()
+            if rep.data:
+                report_id = rep.data[0]["id"]
+        except Exception as se:
+            print(f"[schedule_job] Error guardando reporte: {se}")
+
+        # Actualizar last_run y next_run
+        try:
+            next_run = _calc_next_run(cron)
+            now_iso  = datetime.datetime.utcnow().isoformat() + "Z"
+            supabase_client.table("schedules").update({
+                "last_run": now_iso,
+                "next_run": next_run,
+            }).eq("id", schedule_id).execute()
+        except Exception as ce:
+            print(f"[schedule_job] Error actualizando next_run: {ce}")
+
+        SCHEDULE_JOBS[schedule_id] = {
+            "status": "completed",
+            "step": "✓ Proceso completado exitosamente",
+            "titulo": titulo,
+            "whatsapp_id": whatsapp_id,
+            "whatsapp_error": whatsapp_error,
+            "report_id": report_id,
+            "completed_at": datetime.datetime.utcnow().isoformat(),
+        }
+
+    except Exception as e:
+        print(f"[schedule_job] Error ejecutando schedule {schedule_id}: {e}")
+        SCHEDULE_JOBS[schedule_id] = {
+            "status": "failed",
+            "step": f"Error: {e}",
+            "error": str(e),
+            "failed_at": datetime.datetime.utcnow().isoformat(),
+        }
+
+
 @app.post("/api/schedules/{schedule_id}/run")
 async def run_schedule_now(schedule_id: str, x_api_key: str = Header(default="")):
-    """Disparo manual con streaming SSE para evitar timeouts de proxy (502) en Railway y reportar progreso en vivo."""
-    async def event_generator():
-        try:
-            yield f"data: {json.dumps({'type':'status','message':'Iniciando ejecución manual del schedule...'})}\n\n"
+    """Disparo manual en segundo plano: inicia el job y retorna 200 OK inmediatamente (<50ms)."""
+    if not supabase_client:
+        raise HTTPException(status_code=500, detail="Supabase client not initialized")
 
-            if not supabase_client:
-                yield f"data: {json.dumps({'type':'error','error':'Supabase client no inicializado en el servidor'})}\n\n"
-                return
+    api_key = resolve_api_key(x_api_key)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Falta la clave API de Anthropic (ANTHROPIC_API_KEY en variables de entorno)")
 
-            try:
-                cur = supabase_client.table("schedules").select("*").eq("id", schedule_id).execute()
-                if not cur.data:
-                    yield f"data: {json.dumps({'type':'error','error':'Schedule no encontrado'})}\n\n"
-                    return
-                sched = cur.data[0]
-            except Exception as se:
-                yield f"data: {json.dumps({'type':'error','error':f'Error consultando schedule en Supabase: {se}'})}\n\n"
-                return
+    try:
+        cur = supabase_client.table("schedules").select("id, name").eq("id", schedule_id).execute()
+        if not cur.data:
+            raise HTTPException(status_code=404, detail="Schedule no encontrado")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-            api_key = resolve_api_key(x_api_key)
-            if not api_key:
-                yield f"data: {json.dumps({'type':'error','error':'Falta la clave API de Anthropic (ANTHROPIC_API_KEY en variables de entorno)'})}\n\n"
-                return
+    # Iniciar tarea en background
+    import asyncio
+    asyncio.create_task(_execute_schedule_job(schedule_id, api_key))
 
-            config  = sched.get("config", {}) or {}
-            target  = sched.get("whatsapp_to") or sched.get("email_to", "")
-            cron    = sched.get("cron", "0 7 * * 1")
-            name    = sched.get("name", "Schedule")
+    return {
+        "ok": True,
+        "status": "started",
+        "schedule_id": schedule_id,
+        "message": "Generación y envío iniciados en segundo plano.",
+    }
 
-            yield f"data: {json.dumps({'type':'status','message':'Cargando contexto institucional y conectando con Claude Sonnet...'})}\n\n"
 
-            if config.get("usar_contexto", True):
-                context_docs = load_contexto_docs_db()
-            else:
-                context_docs = "No se incluye contexto institucional."
-            system_prompt = build_system_prompt_db(context_docs)
-            tools = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 10}] if config.get("buscar_web", True) else []
-
-            model = config.get("model", "claude-sonnet-4-6")
-            if model not in VALID_MODELS:
-                model = "claude-sonnet-4-6"
-
-            client = get_anthropic_client(api_key)
-            full_text = ""
-            search_count = 0
-            search_queries = []
-            current_block_type = ""
-            current_tool_input = ""
-
-            yield f"data: {json.dumps({'type':'status','message':'Iniciando búsqueda web y redacción ejecutiva...'})}\n\n"
-
-            async with client.messages.stream(
-                model=model,
-                max_tokens=8192,
-                system=system_prompt,
-                tools=tools,
-                messages=[{"role": "user", "content": build_user_message(config)}],
-            ) as stream:
-                async for event in stream:
-                    etype = getattr(event, "type", "") or ""
-
-                    if etype == "content_block_start":
-                        block = getattr(event, "content_block", None)
-                        current_block_type = getattr(block, "type", "") or ""
-                        current_tool_input = ""
-                        if current_block_type == "tool_use":
-                            search_count += 1
-                            yield f"data: {json.dumps({'type':'searching','count':search_count,'message':f'Buscando en la web ({search_count})...'})}\n\n"
-
-                    elif etype == "content_block_delta":
-                        delta = getattr(event, "delta", None)
-                        dtype = getattr(delta, "type", "") or ""
-                        if dtype == "text_delta":
-                            chunk_text = getattr(delta, "text", "")
-                            full_text += chunk_text
-                            # Enviar pulso continuo para mantener el proxy activo y actualizar progreso
-                            if len(full_text) % 800 < len(chunk_text) + 2:
-                                yield f"data: {json.dumps({'type':'writing','message':f'Redactando newsletter con Claude ({len(full_text)} caracteres)...'})}\n\n"
-                        elif dtype == "input_json_delta":
-                            current_tool_input += getattr(delta, "partial_json", "")
-
-                    elif etype == "content_block_stop":
-                        if current_block_type == "tool_use" and current_tool_input:
-                            try:
-                                ti = json.loads(current_tool_input)
-                                q = ti.get("query", "")
-                                if q:
-                                    search_queries.append(q)
-                            except Exception:
-                                pass
-                        current_block_type = ""
-                        current_tool_input = ""
-
-            # Extraer JSON final del newsletter
-            newsletter = extract_json(full_text)
-            titulo = newsletter.get("titulo", name)
-
-            yield f"data: {json.dumps({'type':'status','message':'Formateando newsletter para WhatsApp...'})}\n\n"
-            whatsapp_text = render_whatsapp_text(newsletter)
-
-            # Envío vía WhatsApp
-            whatsapp_id = ""
-            whatsapp_error = ""
-            if target:
-                yield f"data: {json.dumps({'type':'status','message':f'Enviando mensaje a {target} vía WhatsApp...'})}\n\n"
-                try:
-                    res = send_whatsapp_text(target, whatsapp_text)
-                    if res.get("success"):
-                        whatsapp_id = res.get("id", "")
-                    else:
-                        whatsapp_error = res.get("error", "Error desconocido enviando por WhatsApp")
-                except Exception as we:
-                    whatsapp_error = str(we)
-            else:
-                whatsapp_error = "No hay número de WhatsApp configurado"
-
-            # Guardar reporte en Supabase
-            report_id = None
-            try:
-                rep = supabase_client.table("reports").insert({
-                    "titulo":         titulo,
-                    "origen":         "programado",
-                    "config":         config,
-                    "newsletter":     newsletter,
-                    "search_queries": search_queries,
-                }).execute()
-                if rep.data:
-                    report_id = rep.data[0]["id"]
-            except Exception as se:
-                print(f"[run_now] Error guardando reporte: {se}")
-
-            # Actualizar last_run y next_run
-            try:
-                next_run = _calc_next_run(cron)
-                now_iso  = datetime.datetime.utcnow().isoformat() + "Z"
-                supabase_client.table("schedules").update({
-                    "last_run": now_iso,
-                    "next_run": next_run,
-                }).eq("id", schedule_id).execute()
-            except Exception as ce:
-                print(f"[run_now] Error actualizando next_run: {ce}")
-
-            yield f"data: {json.dumps({'type':'done','ok':True,'report_id':report_id,'whatsapp_id':whatsapp_id,'whatsapp_error':whatsapp_error,'titulo':titulo})}\n\n"
-
-        except Exception as e:
-            print(f"[run_now] Excepción: {e}")
-            yield f"data: {json.dumps({'type':'error','error':str(e)})}\n\n"
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+@app.get("/api/schedules/{schedule_id}/status")
+def get_schedule_run_status(schedule_id: str):
+    """Consulta el estado del trabajo en segundo plano para este schedule."""
+    job = SCHEDULE_JOBS.get(schedule_id)
+    if not job:
+        return {"status": "idle", "step": ""}
+    return job
 
 
 # ─── WhatsApp status endpoint ──────────────────────────────────────────────────

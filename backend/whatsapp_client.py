@@ -31,6 +31,10 @@ def normalize_whatsapp_number(to: str, for_evolution: bool = False) -> str:
     if not digits:
         return cleaned
 
+    # Si es número móvil colombiano de 10 dígitos (ej: 3101234567), agregar prefijo país 57
+    if len(digits) == 10 and digits.startswith('3'):
+        digits = f"57{digits}"
+
     if for_evolution:
         return digits
     return f"{digits}@c.us"
