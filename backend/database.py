@@ -25,9 +25,13 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 raw_db_url = os.environ.get("DATABASE_URL", "").strip()
 
 if raw_db_url:
-    # Railway a veces expone URLs con 'postgres://', pero SQLAlchemy requiere 'postgresql://'
+    # Railway a veces expone URLs con 'postgres://' o 'postgresql://' sin driver explícito.
+    # En SQLAlchemy 2.0+, 'postgresql://' intenta usar 'psycopg' (v3).
+    # Forzamos 'postgresql+psycopg2://' para asegurar compatibilidad con psycopg2.
     if raw_db_url.startswith("postgres://"):
-        DB_URL = raw_db_url.replace("postgres://", "postgresql://", 1)
+        DB_URL = raw_db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+    elif raw_db_url.startswith("postgresql://") and not raw_db_url.startswith("postgresql+"):
+        DB_URL = raw_db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
     else:
         DB_URL = raw_db_url
 else:
