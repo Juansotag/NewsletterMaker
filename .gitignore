@@ -15,3 +15,6 @@ _IGNORE_*
 node_modules
 package.json
 package-lock.json
+*.db
+newsletter.db
+

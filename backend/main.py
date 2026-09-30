@@ -15,7 +15,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
 import anthropic
-from supabase import create_client
+from sqlalchemy import func
+from backend.database import (
+    init_db, SessionLocal, Document as DBDocument, Schedule as DBSchedule, Report as DBReport
+)
 try:
     from croniter import croniter as _croniter
 except ImportError:
@@ -32,6 +35,9 @@ from backend.pdf_generator import generate_newsletter_pdf
 
 app = FastAPI(title="Newsletter Ejecutivo GovLab")
 
+# Inicializar base de datos SQL (crea tablas y siembra contexto si está vacía)
+init_db()
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ─── Cliente Anthropic (Claude) ────────────────────────────────────────────────
@@ -47,23 +53,7 @@ def get_anthropic_client(api_key: str = "") -> anthropic.AsyncAnthropic:
     key = resolve_api_key(api_key)
     return anthropic.AsyncAnthropic(api_key=key)
 
-# ─── Cliente Supabase ─────────────────────────────────────────────────────────
-_supabase_url = os.environ.get("SUPABASE_URL", "")
-_supabase_key = (
-    os.environ.get("SUPABASE_SECRET_KEY", "")
-    or os.environ.get("SUPABASE_SERVICE_KEY", "")
-    or os.environ.get("SUPABASE_KEY", "")
-    or os.environ.get("SUPABASE_ANON_KEY", "")
-)
-supabase_client = None
-if _supabase_url and _supabase_key:
-    import httpx
-    from supabase import ClientOptions
-    # Se desactiva la verificación SSL (verify=False) para evitar errores causados por proxies corporativos (ej. Zscaler)
-    _options = ClientOptions(httpx_client=httpx.Client(verify=False))
-    supabase_client = create_client(_supabase_url, _supabase_key, options=_options)
-
-# ─── Contexto institucional (Supabase) ──────────────────────────────────────────
+# ─── Contexto institucional (Base de Datos SQL) ─────────────────────────────────
 def resolve_doc_references(content: str, loading_stack: list[str] | None = None) -> str:
     """
     Reemplaza referencias @nombre-doc.md dentro del contenido de un documento
@@ -77,9 +67,6 @@ def resolve_doc_references(content: str, loading_stack: list[str] | None = None)
     """
     if loading_stack is None:
         loading_stack = []
-
-    if not supabase_client:
-        return content
 
     refs = _re.findall(r'@([\w][\w\-\.]*\.md)', content)
     if not refs:
@@ -97,44 +84,44 @@ def resolve_doc_references(content: str, loading_stack: list[str] | None = None)
             continue
 
         try:
-            resp = supabase_client.table("documents").select(
-                "name, content, description, folder, tag_context"
-            ).eq("name", ref_name).eq("is_system_prompt", False).execute()
+            with SessionLocal() as db:
+                doc = db.query(DBDocument).filter(
+                    DBDocument.name == ref_name,
+                    DBDocument.is_system_prompt == False
+                ).first()
 
-            if not resp.data:
-                content = content.replace(
-                    placeholder,
-                    f"[Referencia no encontrada: {ref_name}]"
+                if not doc:
+                    content = content.replace(
+                        placeholder,
+                        f"[Referencia no encontrada: {ref_name}]"
+                    )
+                    continue
+
+                tag = (doc.tag_context or "always").lower()
+                if tag == "excluded":
+                    content = content.replace(
+                        placeholder,
+                        f"[Documento excluido del contexto: {ref_name}]"
+                    )
+                    continue
+
+                ref_content     = (doc.content or "").strip()
+                ref_description = (doc.description or "").strip()
+                ref_folder      = doc.folder or ""
+                ref_path        = f"{ref_folder}/{ref_name}" if ref_folder else ref_name
+                use_line        = f"USO: {ref_description}\n" if ref_description else ""
+
+                # Resolver referencias dentro del doc referenciado
+                # con la pila actualizada para detectar ciclos
+                new_stack   = loading_stack + [ref_name]
+                ref_content = resolve_doc_references(ref_content, new_stack)
+
+                injected = (
+                    f"\n\n#### [Documento referenciado: {ref_path}]\n"
+                    f"{use_line}"
+                    f"{ref_content}\n"
                 )
-                continue
-
-            doc = resp.data[0]
-            tag = (doc.get("tag_context") or "always").lower()
-
-            if tag == "excluded":
-                content = content.replace(
-                    placeholder,
-                    f"[Documento excluido del contexto: {ref_name}]"
-                )
-                continue
-
-            ref_content     = doc.get("content", "").strip()
-            ref_description = doc.get("description", "").strip()
-            ref_folder      = doc.get("folder", "")
-            ref_path        = f"{ref_folder}/{ref_name}" if ref_folder else ref_name
-            use_line        = f"USO: {ref_description}\n" if ref_description else ""
-
-            # Resolver referencias dentro del doc referenciado
-            # con la pila actualizada para detectar ciclos
-            new_stack   = loading_stack + [ref_name]
-            ref_content = resolve_doc_references(ref_content, new_stack)
-
-            injected = (
-                f"\n\n#### [Documento referenciado: {ref_path}]\n"
-                f"{use_line}"
-                f"{ref_content}\n"
-            )
-            content = content.replace(placeholder, injected)
+                content = content.replace(placeholder, injected)
 
         except Exception as e:
             print(f"Error resolviendo referencia @{ref_name}: {e}")
@@ -143,32 +130,32 @@ def resolve_doc_references(content: str, loading_stack: list[str] | None = None)
 
 
 def load_contexto_docs_db() -> str:
-    if not supabase_client:
-        return ""
     try:
-        response = supabase_client.table("documents").select(
-            "folder, name, content, description, tag_context"
-        ).eq("is_system_prompt", False).order("sort_order").execute()
-        docs = []
-        for doc in response.data:
-            tag = (doc.get("tag_context") or "always").strip().lower()
-            if tag == "excluded":
-                continue
+        with SessionLocal() as db:
+            doc_rows = db.query(DBDocument).filter(
+                DBDocument.is_system_prompt == False
+            ).order_by(DBDocument.sort_order.asc()).all()
 
-            folder      = doc.get("folder", "")
-            name        = doc.get("name", "")
-            content     = doc.get("content", "").strip()
-            description = doc.get("description", "").strip()
+            docs = []
+            for doc in doc_rows:
+                tag = (doc.tag_context or "always").strip().lower()
+                if tag == "excluded":
+                    continue
 
-            # Resolver referencias @nombre_doc.md dentro del contenido
-            content = resolve_doc_references(content, loading_stack=[name])
+                folder      = doc.folder or ""
+                name        = doc.name or ""
+                content     = (doc.content or "").strip()
+                description = (doc.description or "").strip()
 
-            path     = f"{folder}/{name}" if folder else name
-            use_line = f"USO: {description}\n" if description else ""
-            docs.append(f"### [{path}]\n{use_line}{content}")
-        return "\n\n---\n\n".join(docs)
+                # Resolver referencias @nombre_doc.md dentro del contenido
+                content = resolve_doc_references(content, loading_stack=[name])
+
+                path     = f"{folder}/{name}" if folder else name
+                use_line = f"USO: {description}\n" if description else ""
+                docs.append(f"### [{path}]\n{use_line}{content}")
+            return "\n\n---\n\n".join(docs)
     except Exception as e:
-        print(f"Error cargando documentos de contexto desde Supabase: {e}")
+        print(f"Error cargando documentos de contexto desde la base de datos: {e}")
         return ""
 
 
@@ -275,13 +262,13 @@ DIRECTRIZ MANDATORIA DE RIGOR TEMPORAL Y BÚSQUEDA WEB:
 
 def build_system_prompt_db(ctx: str) -> str:
     template = DEFAULT_SYSTEM_PROMPT_TEMPLATE
-    if supabase_client:
-        try:
-            response = supabase_client.table("documents").select("content").eq("is_system_prompt", True).execute()
-            if response.data and response.data[0].get("content"):
-                template = response.data[0]["content"]
-        except Exception as e:
-            print(f"Error cargando system prompt desde Supabase: {e}")
+    try:
+        with SessionLocal() as db:
+            doc = db.query(DBDocument).filter(DBDocument.is_system_prompt == True).first()
+            if doc and doc.content:
+                template = doc.content
+    except Exception as e:
+        print(f"Error cargando system prompt desde la base de datos: {e}")
 
     # Asegurar que la directriz temporal esté siempre presente incluso si el prompt viene de base de datos
     if "DIRECTRIZ MANDATORIA DE RIGOR TEMPORAL" not in template:
@@ -708,19 +695,21 @@ async def generate_stream(cfg: Config, x_api_key: str = Header(default="")):
                 f_desde = hoy_d - datetime.timedelta(days=cfg.periodo_dias or 7)
                 data = sanitize_newsletter_dates(data, f_desde, hoy_d)
                 report_id = None
-                if supabase_client:
-                    try:
-                        rep = supabase_client.table("reports").insert({
-                            "titulo": data.get("titulo", "Newsletter sin título"),
-                            "origen": "manual",
-                            "config": cfg.dict(),
-                            "newsletter": data,
-                            "search_queries": search_queries,
-                        }).execute()
-                        if rep.data:
-                            report_id = rep.data[0]["id"]
-                    except Exception as save_err:
-                        print(f"Error guardando reporte en Supabase: {save_err}")
+                try:
+                    with SessionLocal() as db:
+                        rep = DBReport(
+                            titulo=data.get("titulo", "Newsletter sin título"),
+                            origen="manual",
+                            config=cfg.dict(),
+                            newsletter=data,
+                            search_queries=search_queries,
+                        )
+                        db.add(rep)
+                        db.commit()
+                        db.refresh(rep)
+                        report_id = rep.id
+                except Exception as save_err:
+                    print(f"Error guardando reporte en la base de datos: {save_err}")
 
                 yield f"data: {json.dumps({'type':'done','newsletter':data,'report_id':report_id})}\n\n"
             except (json.JSONDecodeError, ValueError) as e:
@@ -747,27 +736,25 @@ def get_config_status():
     }
 
 
-# ─── Document CRUD endpoints (Supabase) ─────────────────────────────────────────
+# ─── Document CRUD endpoints (Base de Datos SQL) ──────────────────────────────
 @app.get("/api/docs")
 def list_docs():
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
-        response = supabase_client.table("documents").select("id, folder, name, description, is_system_prompt, sort_order, updated_at").order("sort_order").execute()
-        return {"files": response.data}
+        with SessionLocal() as db:
+            docs = db.query(DBDocument).order_by(DBDocument.sort_order.asc()).all()
+            return {"files": [d.to_dict(include_content=False) for d in docs]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/docs/{doc_id}")
 def get_doc(doc_id: str):
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
-        response = supabase_client.table("documents").select("*").eq("id", doc_id).execute()
-        if not response.data:
-            raise HTTPException(status_code=404, detail="Documento no encontrado")
-        return response.data[0]
+        with SessionLocal() as db:
+            doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+            if not doc:
+                raise HTTPException(status_code=404, detail="Documento no encontrado")
+            return doc.to_dict(include_content=True)
     except HTTPException:
         raise
     except Exception as e:
@@ -776,58 +763,61 @@ def get_doc(doc_id: str):
 
 @app.post("/api/docs")
 def create_doc(body: DocCreate):
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
-        data = body.dict()
-        
-        # Calculate sort order based on maximum sort_order + 1
-        max_sort_response = supabase_client.table("documents").select("sort_order").order("sort_order", desc=True).limit(1).execute()
-        sort_order = 0
-        if max_sort_response.data:
-            sort_order = max_sort_response.data[0]["sort_order"] + 1
-            
-        data["sort_order"] = sort_order
-        data["is_system_prompt"] = False
-        
-        response = supabase_client.table("documents").insert(data).execute()
-        if not response.data:
-            raise HTTPException(status_code=500, detail="Error al crear el documento")
-        return response.data[0]
+        with SessionLocal() as db:
+            max_sort = db.query(func.max(DBDocument.sort_order)).scalar() or 0
+            doc = DBDocument(
+                name=body.name,
+                folder=body.folder or "",
+                content=body.content or "",
+                description=body.description or "",
+                tag_context="always",
+                is_system_prompt=False,
+                sort_order=max_sort + 1
+            )
+            db.add(doc)
+            db.commit()
+            db.refresh(doc)
+            return doc.to_dict(include_content=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.put("/api/docs/{doc_id}")
 def update_doc(doc_id: str, body: DocUpdate):
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
-        update_data = {k: v for k, v in body.dict().items() if v is not None}
-        if not update_data:
-            raise HTTPException(status_code=400, detail="No se enviaron campos para actualizar")
-            
-        response = supabase_client.table("documents").update(update_data).eq("id", doc_id).execute()
-        if not response.data:
-            raise HTTPException(status_code=404, detail="Documento no encontrado o no actualizado")
-        return response.data[0]
+        with SessionLocal() as db:
+            doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+            if not doc:
+                raise HTTPException(status_code=404, detail="Documento no encontrado o no actualizado")
+            update_data = {k: v for k, v in body.dict().items() if v is not None}
+            if not update_data:
+                raise HTTPException(status_code=400, detail="No se enviaron campos para actualizar")
+            for k, v in update_data.items():
+                if hasattr(doc, k):
+                    setattr(doc, k, v)
+            doc.updated_at = datetime.datetime.utcnow()
+            db.commit()
+            db.refresh(doc)
+            return doc.to_dict(include_content=True)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.delete("/api/docs/{doc_id}")
 def delete_doc(doc_id: str):
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
-        check_response = supabase_client.table("documents").select("is_system_prompt").eq("id", doc_id).execute()
-        if not check_response.data:
-            raise HTTPException(status_code=404, detail="Documento no encontrado")
-        if check_response.data[0]["is_system_prompt"]:
-            raise HTTPException(status_code=400, detail="No se puede eliminar el prompt del sistema")
-            
-        supabase_client.table("documents").delete().eq("id", doc_id).execute()
-        return {"ok": True}
+        with SessionLocal() as db:
+            doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+            if not doc:
+                raise HTTPException(status_code=404, detail="Documento no encontrado")
+            if doc.is_system_prompt:
+                raise HTTPException(status_code=400, detail="No se puede eliminar el prompt del sistema")
+            db.delete(doc)
+            db.commit()
+            return {"ok": True}
     except HTTPException:
         raise
     except Exception as e:
@@ -837,26 +827,30 @@ def delete_doc(doc_id: str):
 # ─── Reports endpoints (Historial) ──────────────────────────────────────────────────
 @app.get("/api/reports")
 def list_reports():
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
-        response = supabase_client.table("reports").select(
-            "id, created_at, titulo, origen, config"
-        ).order("created_at", desc=True).execute()
-        return {"reports": response.data}
+        with SessionLocal() as db:
+            reps = db.query(DBReport).order_by(DBReport.created_at.desc()).all()
+            return {"reports": [
+                {
+                    "id": r.id,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "titulo": r.titulo,
+                    "origen": r.origen,
+                    "config": r.config
+                } for r in reps
+            ]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/reports/{report_id}")
 def get_report(report_id: str):
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
-        response = supabase_client.table("reports").select("*").eq("id", report_id).execute()
-        if not response.data:
-            raise HTTPException(status_code=404, detail="Reporte no encontrado")
-        return response.data[0]
+        with SessionLocal() as db:
+            rep = db.query(DBReport).filter(DBReport.id == report_id).first()
+            if not rep:
+                raise HTTPException(status_code=404, detail="Reporte no encontrado")
+            return rep.to_dict()
     except HTTPException:
         raise
     except Exception as e:
@@ -865,11 +859,13 @@ def get_report(report_id: str):
 
 @app.delete("/api/reports/{report_id}")
 def delete_report(report_id: str):
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
-        supabase_client.table("reports").delete().eq("id", report_id).execute()
-        return {"ok": True}
+        with SessionLocal() as db:
+            rep = db.query(DBReport).filter(DBReport.id == report_id).first()
+            if rep:
+                db.delete(rep)
+                db.commit()
+            return {"ok": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -877,25 +873,23 @@ def delete_report(report_id: str):
 @app.get("/api/reports/{report_id}/pdf")
 def download_report_pdf(report_id: str):
     """Genera y descarga el PDF ejecutivo de un reporte guardado."""
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
-        response = supabase_client.table("reports").select("*").eq("id", report_id).execute()
-        if not response.data:
-            raise HTTPException(status_code=404, detail="Reporte no encontrado")
-        rep = response.data[0]
-        newsletter = rep.get("newsletter") or {}
-        pdf_bytes = generate_newsletter_pdf(newsletter)
-        
-        fecha = newsletter.get("fecha") or rep.get("created_at", "")[:10] or "reporte"
-        filename = f"Radar_Ejecutivo_{fecha}.pdf"
-        
-        import io
-        return StreamingResponse(
-            io.BytesIO(pdf_bytes),
-            media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
-        )
+        with SessionLocal() as db:
+            rep = db.query(DBReport).filter(DBReport.id == report_id).first()
+            if not rep:
+                raise HTTPException(status_code=404, detail="Reporte no encontrado")
+            newsletter = rep.newsletter or {}
+            pdf_bytes = generate_newsletter_pdf(newsletter)
+            
+            fecha = newsletter.get("fecha") or (rep.created_at.isoformat()[:10] if rep.created_at else "reporte")
+            filename = f"Radar_Ejecutivo_{fecha}.pdf"
+            
+            import io
+            return StreamingResponse(
+                io.BytesIO(pdf_bytes),
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
     except HTTPException:
         raise
     except Exception as e:
@@ -930,43 +924,35 @@ def _send_email(to: str, subject: str, html: str) -> str:
     return resp.get("id", "")
 
 
-# ─── Schedules endpoints ─────────────────────────────────────────────────────
+# ─── Schedules endpoints (Base de Datos SQL) ─────────────────────────────────
 @app.get("/api/schedules")
 def list_schedules():
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
-        resp = supabase_client.table("schedules").select("*").order("created_at", desc=True).execute()
-        schedules = resp.data or []
-        # Asegurar campo whatsapp_to para el frontend
-        for s in schedules:
-            s["whatsapp_to"] = s.get("whatsapp_to") or s.get("email_to", "")
-        return {"schedules": schedules}
+        with SessionLocal() as db:
+            scheds = db.query(DBSchedule).order_by(DBSchedule.created_at.desc()).all()
+            return {"schedules": [s.to_dict() for s in scheds]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/schedules")
 def create_schedule(body: ScheduleCreate):
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
         target = body.whatsapp_to or body.email_to or ""
         next_run = _calc_next_run(body.cron)
-        data = {
-            "name":     body.name,
-            "config":   body.config,
-            "email_to": target,  # Compatibilidad con columna existente en Supabase
-            "cron":     body.cron,
-            "next_run": next_run,
-            "active":   True,
-        }
-        resp = supabase_client.table("schedules").insert(data).execute()
-        if not resp.data:
-            raise HTTPException(status_code=500, detail="Error al crear schedule")
-        row = resp.data[0]
-        row["whatsapp_to"] = row.get("whatsapp_to") or row.get("email_to", "")
-        return row
+        with SessionLocal() as db:
+            sched = DBSchedule(
+                name=body.name,
+                config=body.config,
+                email_to=target,
+                cron=body.cron,
+                next_run=next_run,
+                active=True,
+            )
+            db.add(sched)
+            db.commit()
+            db.refresh(sched)
+            return sched.to_dict()
     except HTTPException:
         raise
     except Exception as e:
@@ -975,22 +961,25 @@ def create_schedule(body: ScheduleCreate):
 
 @app.put("/api/schedules/{schedule_id}")
 def update_schedule(schedule_id: str, body: ScheduleUpdate):
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
         update = {k: v for k, v in body.dict().items() if v is not None}
         if not update:
             raise HTTPException(status_code=400, detail="Sin campos para actualizar")
-        if "whatsapp_to" in update:
-            update["email_to"] = update.pop("whatsapp_to")
-        if "cron" in update:
-            update["next_run"] = _calc_next_run(update["cron"])
-        resp = supabase_client.table("schedules").update(update).eq("id", schedule_id).execute()
-        if not resp.data:
-            raise HTTPException(status_code=404, detail="Schedule no encontrado")
-        row = resp.data[0]
-        row["whatsapp_to"] = row.get("whatsapp_to") or row.get("email_to", "")
-        return row
+        with SessionLocal() as db:
+            sched = db.query(DBSchedule).filter(DBSchedule.id == schedule_id).first()
+            if not sched:
+                raise HTTPException(status_code=404, detail="Schedule no encontrado")
+            if "whatsapp_to" in update:
+                sched.email_to = update.pop("whatsapp_to")
+            if "cron" in update:
+                sched.cron = update["cron"]
+                sched.next_run = _calc_next_run(update["cron"])
+            for k, v in update.items():
+                if hasattr(sched, k):
+                    setattr(sched, k, v)
+            db.commit()
+            db.refresh(sched)
+            return sched.to_dict()
     except HTTPException:
         raise
     except Exception as e:
@@ -999,11 +988,13 @@ def update_schedule(schedule_id: str, body: ScheduleUpdate):
 
 @app.delete("/api/schedules/{schedule_id}")
 def delete_schedule(schedule_id: str):
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
-        supabase_client.table("schedules").delete().eq("id", schedule_id).execute()
-        return {"ok": True}
+        with SessionLocal() as db:
+            sched = db.query(DBSchedule).filter(DBSchedule.id == schedule_id).first()
+            if sched:
+                db.delete(sched)
+                db.commit()
+            return {"ok": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1011,17 +1002,15 @@ def delete_schedule(schedule_id: str):
 @app.patch("/api/schedules/{schedule_id}/toggle")
 def toggle_schedule(schedule_id: str):
     """Activa/desactiva un schedule."""
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
     try:
-        cur = supabase_client.table("schedules").select("active").eq("id", schedule_id).execute()
-        if not cur.data:
-            raise HTTPException(status_code=404, detail="Schedule no encontrado")
-        new_active = not cur.data[0]["active"]
-        resp = supabase_client.table("schedules").update({"active": new_active}).eq("id", schedule_id).execute()
-        row = resp.data[0]
-        row["whatsapp_to"] = row.get("whatsapp_to") or row.get("email_to", "")
-        return row
+        with SessionLocal() as db:
+            sched = db.query(DBSchedule).filter(DBSchedule.id == schedule_id).first()
+            if not sched:
+                raise HTTPException(status_code=404, detail="Schedule no encontrado")
+            sched.active = not sched.active
+            db.commit()
+            db.refresh(sched)
+            return sched.to_dict()
     except HTTPException:
         raise
     except Exception as e:
@@ -1043,13 +1032,11 @@ async def _execute_schedule_job(schedule_id: str, api_key: str):
     }
 
     try:
-        if not supabase_client:
-            raise RuntimeError("Supabase client no inicializado en el servidor")
-
-        cur = supabase_client.table("schedules").select("*").eq("id", schedule_id).execute()
-        if not cur.data:
-            raise RuntimeError("Schedule no encontrado en Supabase")
-        sched = cur.data[0]
+        with SessionLocal() as db:
+            sched_obj = db.query(DBSchedule).filter(DBSchedule.id == schedule_id).first()
+            if not sched_obj:
+                raise RuntimeError("Schedule no encontrado en la base de datos")
+            sched = sched_obj.to_dict()
 
         config  = sched.get("config", {}) or {}
         target  = sched.get("whatsapp_to") or sched.get("email_to", "")
@@ -1169,18 +1156,21 @@ async def _execute_schedule_job(schedule_id: str, api_key: str):
             except Exception as pe:
                 print(f"[schedule_job] Error generando/enviando PDF adjunto: {pe}")
 
-        # Guardar reporte en Supabase
+        # Guardar reporte en base de datos
         report_id = None
         try:
-            rep = supabase_client.table("reports").insert({
-                "titulo":         titulo,
-                "origen":         "programado",
-                "config":         config,
-                "newsletter":     newsletter,
-                "search_queries": search_queries,
-            }).execute()
-            if rep.data:
-                report_id = rep.data[0]["id"]
+            with SessionLocal() as db:
+                rep = DBReport(
+                    titulo=titulo,
+                    origen="programado",
+                    config=config,
+                    newsletter=newsletter,
+                    search_queries=search_queries,
+                )
+                db.add(rep)
+                db.commit()
+                db.refresh(rep)
+                report_id = rep.id
         except Exception as se:
             print(f"[schedule_job] Error guardando reporte: {se}")
 
@@ -1188,10 +1178,12 @@ async def _execute_schedule_job(schedule_id: str, api_key: str):
         try:
             next_run = _calc_next_run(cron)
             now_iso  = datetime.datetime.utcnow().isoformat() + "Z"
-            supabase_client.table("schedules").update({
-                "last_run": now_iso,
-                "next_run": next_run,
-            }).eq("id", schedule_id).execute()
+            with SessionLocal() as db:
+                sched_to_update = db.query(DBSchedule).filter(DBSchedule.id == schedule_id).first()
+                if sched_to_update:
+                    sched_to_update.last_run = now_iso
+                    sched_to_update.next_run = next_run
+                    db.commit()
         except Exception as ce:
             print(f"[schedule_job] Error actualizando next_run: {ce}")
 
@@ -1220,17 +1212,15 @@ async def _execute_schedule_job(schedule_id: str, api_key: str):
 @app.post("/api/schedules/{schedule_id}/run")
 async def run_schedule_now(schedule_id: str, x_api_key: str = Header(default="")):
     """Disparo manual en segundo plano: inicia el job y retorna 200 OK inmediatamente (<50ms)."""
-    if not supabase_client:
-        raise HTTPException(status_code=500, detail="Supabase client not initialized")
-
     api_key = resolve_api_key(x_api_key)
     if not api_key:
         raise HTTPException(status_code=400, detail="Falta la clave API de Anthropic (ANTHROPIC_API_KEY en variables de entorno)")
 
     try:
-        cur = supabase_client.table("schedules").select("id, name").eq("id", schedule_id).execute()
-        if not cur.data:
-            raise HTTPException(status_code=404, detail="Schedule no encontrado")
+        with SessionLocal() as db:
+            sched = db.query(DBSchedule).filter(DBSchedule.id == schedule_id).first()
+            if not sched:
+                raise HTTPException(status_code=404, detail="Schedule no encontrado")
     except HTTPException:
         raise
     except Exception as e:

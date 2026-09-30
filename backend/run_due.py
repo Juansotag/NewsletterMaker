@@ -1,6 +1,7 @@
 """
 backend/run_due.py
 Script de Cron Job para Railway: genera y envía los newsletters programados cuyo next_run ya venció.
+Utiliza base de datos SQL nativa (PostgreSQL en Railway / SQLite en local).
 
 Uso:
   python -m backend.run_due
@@ -16,28 +17,14 @@ load_dotenv(override=True)
 
 import httpx
 import anthropic
-from supabase import create_client, ClientOptions
 from croniter import croniter
 
+from backend.database import init_db, SessionLocal, Document as DBDocument, Schedule as DBSchedule, Report as DBReport
 from backend.email_render import render_email_html
 from backend.whatsapp_render import render_whatsapp_text
 from backend.whatsapp_client import send_whatsapp_text, send_whatsapp_document
 from backend.pdf_generator import generate_newsletter_pdf
 from backend.main import resolve_doc_references, extract_json, build_user_message, DEFAULT_SYSTEM_PROMPT_TEMPLATE, sanitize_newsletter_dates
-
-
-# ── Clientes ──────────────────────────────────────────────────────────────────
-_supabase_url = os.environ.get("SUPABASE_URL", "")
-_supabase_key = (
-    os.environ.get("SUPABASE_SECRET_KEY", "")
-    or os.environ.get("SUPABASE_SERVICE_KEY", "")
-)
-_options = ClientOptions(httpx_client=httpx.Client(verify=False))
-supabase = create_client(_supabase_url, _supabase_key, options=_options) if (_supabase_url and _supabase_key) else None
-
-_anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-_resend_key    = os.environ.get("RESEND_API_KEY", "")
-_from_email    = os.environ.get("RESEND_FROM_EMAIL", "onboarding@resend.dev")
 
 
 # ── Generación con Claude (Anthropic) ──────────────────────────────────────────
@@ -46,8 +33,6 @@ async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str
     Genera el newsletter completo usando Claude con búsqueda web nativa.
     Retorna (newsletter_json, search_queries).
     """
-    import anthropic
-
     key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
     if not key:
         raise ValueError("ANTHROPIC_API_KEY no configurada en variables de entorno")
@@ -56,33 +41,33 @@ async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str
 
     # System prompt
     sp_template = DEFAULT_SYSTEM_PROMPT_TEMPLATE
-    if supabase:
-        try:
-            sys_resp = supabase.table("documents").select("content").eq("is_system_prompt", True).execute()
-            if sys_resp.data and sys_resp.data[0].get("content"):
-                sp_template = sys_resp.data[0]["content"]
-        except Exception:
-            sp_template = DEFAULT_SYSTEM_PROMPT_TEMPLATE
+    try:
+        with SessionLocal() as db:
+            sys_doc = db.query(DBDocument).filter(DBDocument.is_system_prompt == True).first()
+            if sys_doc and sys_doc.content:
+                sp_template = sys_doc.content
+    except Exception:
+        sp_template = DEFAULT_SYSTEM_PROMPT_TEMPLATE
 
     try:
-        ctx_resp = supabase.table("documents").select(
-            "folder, name, content, description, tag_context"
-        ).eq("is_system_prompt", False).order("sort_order").execute() if supabase else None
-        docs = []
-        if ctx_resp and ctx_resp.data:
-            for doc in ctx_resp.data:
-                tag = (doc.get("tag_context") or "always").strip().lower()
+        with SessionLocal() as db:
+            doc_rows = db.query(DBDocument).filter(
+                DBDocument.is_system_prompt == False
+            ).order_by(DBDocument.sort_order.asc()).all()
+            docs = []
+            for doc in doc_rows:
+                tag = (doc.tag_context or "always").strip().lower()
                 if tag == "excluded":
                     continue
-                folder = doc.get("folder", "")
-                name   = doc.get("name", "")
-                cont   = doc.get("content", "").strip()
+                folder = doc.folder or ""
+                name   = doc.name or ""
+                cont   = (doc.content or "").strip()
                 cont   = resolve_doc_references(cont, loading_stack=[name])
-                desc   = doc.get("description", "").strip()
+                desc   = (doc.description or "").strip()
                 path   = f"{folder}/{name}" if folder else name
                 use_l  = f"USO: {desc}\n" if desc else ""
                 docs.append(f"### [{path}]\n{use_l}{cont}")
-        ctx_text = "\n\n---\n\n".join(docs)
+            ctx_text = "\n\n---\n\n".join(docs)
     except Exception:
         ctx_text = ""
 
@@ -144,23 +129,6 @@ async def generate_once(config: dict, api_key: str = "") -> tuple[dict, list[str
     return newsletter_json, search_queries
 
 
-
-# ── Envío de email vía Resend ─────────────────────────────────────────────────
-def send_email(to: str, subject: str, html: str) -> str:
-    """
-    Envía un email con Resend. Retorna el ID del email enviado.
-    """
-    import resend
-    resend.api_key = _resend_key
-    resp = resend.Emails.send({
-        "from":    _from_email,
-        "to":      [t.strip() for t in to.split(",")],
-        "subject": subject,
-        "html":    html,
-    })
-    return resp.get("id", "")
-
-
 # ── Cálculo de next_run ───────────────────────────────────────────────────────
 def calc_next_run(cron_expr: str) -> str:
     """Devuelve el próximo datetime en ISO 8601 UTC para la expresión cron dada."""
@@ -172,24 +140,26 @@ def calc_next_run(cron_expr: str) -> str:
 
 # ── Script principal ──────────────────────────────────────────────────────────
 async def run_due_schedules():
-    if not supabase:
-        print("[run_due] Supabase no configurado. Saliendo.")
-        return
-
+    init_db()
     now_iso = datetime.datetime.utcnow().isoformat() + "Z"
     print(f"[run_due] Ejecutando a {now_iso}")
 
     try:
-        resp = supabase.table("schedules").select("*").eq("active", True).lte("next_run", now_iso).execute()
+        with SessionLocal() as db:
+            due_rows = db.query(DBSchedule).filter(
+                DBSchedule.active == True,
+                DBSchedule.next_run <= now_iso
+            ).all()
+            due_schedules = [s.to_dict() for s in due_rows]
     except Exception as e:
         print(f"[run_due] Error consultando schedules: {e}")
         return
 
-    if not resp.data:
+    if not due_schedules:
         print("[run_due] Sin schedules pendientes.")
         return
 
-    for sched in resp.data:
+    for sched in due_schedules:
         sid    = sched["id"]
         name   = sched.get("name", "Schedule sin nombre")
         config = sched.get("config", {})
@@ -241,23 +211,28 @@ async def run_due_schedules():
 
         # Guardar reporte
         try:
-            supabase.table("reports").insert({
-                "titulo":         titulo,
-                "origen":         "programado",
-                "config":         config,
-                "newsletter":     newsletter,
-                "search_queries": queries,
-            }).execute()
+            with SessionLocal() as db:
+                rep = DBReport(
+                    titulo=titulo,
+                    origen="programado",
+                    config=config,
+                    newsletter=newsletter,
+                    search_queries=queries,
+                )
+                db.add(rep)
+                db.commit()
         except Exception as e:
             print(f"[run_due] Error guardando reporte para {name}: {e}")
 
         # Actualizar last_run y next_run
         next_run = calc_next_run(cron)
         try:
-            supabase.table("schedules").update({
-                "last_run": now_iso,
-                "next_run": next_run,
-            }).eq("id", sid).execute()
+            with SessionLocal() as db:
+                sched_item = db.query(DBSchedule).filter(DBSchedule.id == sid).first()
+                if sched_item:
+                    sched_item.last_run = now_iso
+                    sched_item.next_run = next_run
+                    db.commit()
         except Exception as e:
             print(f"[run_due] Error actualizando schedule {sid}: {e}")
 

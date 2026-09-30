@@ -1,64 +1,79 @@
+"""
+backend/seed_docs.py
+Inicializa o actualiza los documentos de contexto institucional en la base de datos SQL
+a partir de los archivos Markdown ubicados en la carpeta Contexto/.
+"""
 import os
 import glob
-from supabase import create_client
 from dotenv import load_dotenv
 
-# Load env vars
-load_dotenv()
+load_dotenv(override=True)
 
-# Setup Supabase client
-supabase_url = os.environ.get("SUPABASE_URL")
-# Use secret key first (has bypass RLS), fallback to service key
-supabase_key = os.environ.get("SUPABASE_SECRET_KEY") or os.environ.get("SUPABASE_SERVICE_KEY")
-
-if not supabase_url or not supabase_key:
-    raise ValueError("Missing SUPABASE_URL or SUPABASE_SECRET_KEY/SUPABASE_SERVICE_KEY environment variables")
-
-supabase = create_client(supabase_url, supabase_key)
+from backend.database import init_db, SessionLocal, Document
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONTEXTO_DIR = os.path.join(ROOT, "Contexto")
 
+
 def seed():
+    init_db()
     search_path = os.path.join(CONTEXTO_DIR, "*.md")
     files = sorted(glob.glob(search_path))
-    
-    print(f"Found {len(files)} markdown files in {CONTEXTO_DIR}")
-    
-    docs_to_insert = []
-    for filepath in files:
-        filename = os.path.basename(filepath)
-        
-        # Read content
-        with open(filepath, "r", encoding="utf-8") as f:
-            content = f.read()
-            
-        # Parse is_system_prompt
-        is_system_prompt = (filename == "00_sistema_instrucciones.md")
-        
-        # Parse sort_order from prefix (e.g. "01_xxx.md" -> 1)
-        sort_order = 0
-        prefix = filename.split("_")[0]
-        if prefix.isdigit():
-            sort_order = int(prefix)
-            
-        doc_data = {
-            "name": filename,
-            "folder": "",
-            "content": content,
-            "description": "",
-            "is_system_prompt": is_system_prompt,
-            "sort_order": sort_order
-        }
-        docs_to_insert.append(doc_data)
-        
-    print(f"Upserting {len(docs_to_insert)} documents into Supabase...")
-    
-    # Perform upsert
-    res = supabase.table("documents").upsert(docs_to_insert, on_conflict="folder,name").execute()
-    
-    print("Seeding completed successfully!")
-    print(f"Inserted/updated {len(res.data)} documents.")
+
+    if not files:
+        print(f"[seed_docs] No se encontraron archivos markdown en {CONTEXTO_DIR}")
+        return
+
+    print(f"[seed_docs] Se encontraron {len(files)} archivos markdown en {CONTEXTO_DIR}")
+
+    db = SessionLocal()
+    inserted = 0
+    updated = 0
+    try:
+        for filepath in files:
+            filename = os.path.basename(filepath)
+
+            with open(filepath, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            is_system_prompt = (filename == "00_sistema_instrucciones.md")
+            sort_order = 0
+            prefix = filename.split("_")[0]
+            if prefix.isdigit():
+                sort_order = int(prefix)
+
+            # Buscar si ya existe por folder y name
+            doc = db.query(Document).filter(
+                Document.folder == "",
+                Document.name == filename
+            ).first()
+
+            if doc:
+                doc.content = content
+                doc.is_system_prompt = is_system_prompt
+                doc.sort_order = sort_order
+                updated += 1
+            else:
+                doc = Document(
+                    folder="",
+                    name=filename,
+                    content=content,
+                    description="",
+                    tag_context="always",
+                    is_system_prompt=is_system_prompt,
+                    sort_order=sort_order,
+                )
+                db.add(doc)
+                inserted += 1
+
+        db.commit()
+        print(f"[seed_docs] Operación completada exitosamente: {inserted} insertados, {updated} actualizados.")
+    except Exception as e:
+        db.rollback()
+        print(f"[seed_docs] Error durante el sembrado: {e}")
+    finally:
+        db.close()
+
 
 if __name__ == "__main__":
     seed()

@@ -2,7 +2,7 @@
 
 Plataforma integral para la investigación, generación, diseño y despacho automatizado de boletines ejecutivos de alto impacto para directivos de la **Universidad de La Sabana** (Dirección General de Proyección Social y Co-Creación).
 
-La herramienta combina inteligencia artificial de última generación con búsqueda web en vivo, rigor temporal estricto, despacho multicanal directo a **WhatsApp** (texto enriquecido y documento PDF adjunto), programación periódica automatizada y gestión dinámica del contexto institucional en la nube.
+La herramienta combina inteligencia artificial con búsqueda web en vivo, rigor temporal estricto, despacho multicanal directo a **WhatsApp** (texto enriquecido y documento PDF adjunto), programación periódica automatizada y almacenamiento centralizado en **PostgreSQL (Railway)** o SQLite en desarrollo local.
 
 ---
 
@@ -19,25 +19,30 @@ La herramienta combina inteligencia artificial de última generación con búsqu
   - Soporte modular para proveedores de mensajería: **Evolution API** (recomendado para producción / Railway, basado en Baileys, ligero y sin Chromium) y **Open-Wa**.
 
 - **Generador de PDF Ejecutivo de Alta Calidad**:
-  - Motor de renderizado server-side basado en ReportLab (`backend/pdf_generator.py`).
+  - Motor de renderizado server-side basado en ReportLab ([pdf_generator.py](file:///c:/Users/juans/Downloads/NewsletterMaker/backend/pdf_generator.py)).
   - Diseño editorial institucional: paleta azul UniSabana, tipografía corporativa, métricas destacadas, titulares analíticos y paginación inteligente ("Página X de Y").
 
 - **Programación y Automatización (Schedules & Cron)**:
   - Configuración de envíos periódicos con presets directos (Lunes 7:00 am, Viernes 7:00 am, L-M-V, 1er día del mes) o expresiones cron personalizadas.
   - Ejecución asíncrona en segundo plano desde el dashboard web con monitor de progreso en vivo.
-  - Script independiente (`python -m backend.run_due`) listo para programarse como Cron Job en plataformas como Railway.
+  - Script runner independiente ([backend/run_due.py](file:///c:/Users/juans/Downloads/NewsletterMaker/backend/run_due.py)) listo para programarse como Cron Job en plataformas como Railway.
+
+- **Base de Datos SQL Nativa (PostgreSQL en Railway / SQLite en Local)**:
+  - Capa de datos con **SQLAlchemy** ([backend/database.py](file:///c:/Users/juans/Downloads/NewsletterMaker/backend/database.py)) que autoinicializa las tablas (`documents`, `schedules`, `reports`) al arrancar.
+  - Si no se especifica `DATABASE_URL` (desarrollo local), utiliza automáticamente SQLite local (`newsletter.db`).
+  - En producción, se conecta de forma directa y privada a la base de datos PostgreSQL de Railway sin depender de APIs de terceros.
 
 - **Editor de Contexto Institucional Inteligente**:
-  - Base de conocimiento persistente en **Supabase** (`documents`) estructurada por carpetas y orden temático.
+  - Gestión de documentos estratégicos en la base de datos (`documents`) con carpetas y orden temático.
   - Resolución automática y recursiva de referencias interdocumentales (`@documento.md`) con protección contra dependencias circulares.
   - Asistente de IA incorporado para refinar, traducir o expandir lineamientos estratégicos protegiendo las especificaciones técnicas del sistema.
 
 - **Historial Centralizado de Reportes**:
-  - Registro auditable de cada edición generada (manual o programada) con almacenamiento en Supabase (`reports`).
+  - Registro auditable de cada edición generada (manual o programada) con almacenamiento en la tabla `reports`.
   - Consulta y descarga directa de los PDFs generados en cualquier momento.
 
 - **Interfaz Ejecutiva & Guía Rápida**:
-  - Panel unificado de trabajo (`index.html`) con diseño limpio basado en los lineamientos visuales del GovLab y la Universidad de La Sabana.
+  - Panel unificado de trabajo ([index.html](file:///c:/Users/juans/Downloads/NewsletterMaker/index.html)) con diseño limpio basado en los lineamientos visuales del GovLab y la Universidad de La Sabana.
   - Guía interactiva paso a paso (tour integrado) para nuevos usuarios.
   - Modo demo disponible para previsualizar la experiencia sin necesidad de backend activo.
 
@@ -47,21 +52,25 @@ La herramienta combina inteligencia artificial de última generación con búsqu
 
 ```text
 NewsletterMaker/
+├── Contexto/                     # Documentos base institucionales en Markdown
+│   ├── 00_sistema_instrucciones.md
+│   ├── 01_universidad-la-sabana.md
+│   └── ...
 ├── assets/                       # Recursos estáticos del frontend
 │   ├── app.js                    # Lógica SPA, estado, llamadas a API y tour interactivo
-│   ├── style.css                 # Sistema de diseño, temas y diseño responsivo
+│   ├── style.css                 # Sistema de diseño institucional y temas
 │   ├── Govlab.png                # Logo oficial del GovLab
-│   ├── Universidad_de_la_Sabana.png  # Logo oficial UniSabana
-│   ├── marked.min.js             # Renderizador de Markdown
-│   └── html2pdf.bundle.min.js    # Utilidad de exportación PDF cliente
+│   └── Universidad_de_la_Sabana.png # Logo oficial UniSabana
 ├── backend/                      # Backend FastAPI y lógica de negocio
+│   ├── database.py               # Capa SQL (SQLAlchemy): modelos Document, Schedule, Report
 │   ├── main.py                   # Rutas REST/SSE, orquestación de IA y servicios
 │   ├── whatsapp_client.py        # Cliente modular para Evolution API y Open-Wa
 │   ├── whatsapp_render.py        # Conversor del esquema JSON a formato WhatsApp
 │   ├── pdf_generator.py          # Generador de PDF institucional con ReportLab
 │   ├── email_render.py           # Renderizador HTML para respaldo por correo
 │   ├── run_due.py                # Runner de ejecución periódica (Railway Cron Job)
-│   └── seed_docs.py              # Script para inicializar contexto en Supabase
+│   ├── seed_docs.py              # Script para inicializar contexto en SQL desde Contexto/
+│   └── migrate_supabase_to_postgres.py # Utilidad para transferir datos antiguos desde Supabase
 ├── index.html                    # Frontend unificado (Single Page Application)
 ├── run.py                        # Script de inicio rápido local con Uvicorn
 ├── requirements.txt              # Dependencias de Python
@@ -82,9 +91,8 @@ cp .env.example .env
 
 | Variable | Descripción | Obligatoria |
 | :--- | :--- | :--- |
+| `DATABASE_URL` | URL de conexión PostgreSQL (en Railway se genera automáticamente al añadir el plugin de PostgreSQL; en local usa SQLite si se deja vacía). | **Sí (en Prod)** |
 | `ANTHROPIC_API_KEY` | Clave API de Anthropic para la generación con Claude Sonnet 4.6 y Haiku. | **Sí** |
-| `SUPABASE_URL` | URL de tu instancia de Supabase (`https://xxxx.supabase.co`). | **Sí** |
-| `SUPABASE_SECRET_KEY` | Clave `service_role` o secret key de Supabase (permite lectura/escritura de contexto, reportes y programaciones). | **Sí** |
 | `EVOLUTION_API_URL` | URL de la instancia de Evolution API (ej: `http://localhost:8080` o URL en la nube). | Recomendada |
 | `EVOLUTION_API_KEY` | Clave global o de autenticación configurada en Evolution API. | Recomendada |
 | `EVOLUTION_INSTANCE` | Nombre de la instancia activa de WhatsApp (por defecto: `govlab`). | Recomendada |
@@ -99,8 +107,7 @@ cp .env.example .env
 
 ### 1. Requisitos Previos
 - Python 3.10 o superior instalado.
-- Cuenta o instancia configurada de Supabase y clave API de Anthropic.
-- (Opcional para envíos reales de WhatsApp) Instancia de Evolution API vinculada mediante código QR.
+- Clave API de Anthropic (`ANTHROPIC_API_KEY`).
 
 ### 2. Instalación de dependencias
 ```bash
@@ -108,53 +115,64 @@ pip install -r requirements.txt
 ```
 
 ### 3. Configurar entorno
-Configura las credenciales en `.env` a partir de `.env.example`.
+Configura tu clave en `.env` (si dejas `DATABASE_URL` vacía, se creará un archivo SQLite local `newsletter.db` de forma automática).
 
-### 4. Inicializar documentos de contexto (opcional)
-Si es una base de datos nueva en Supabase y deseas cargar los documentos iniciales de contexto:
-```bash
-python -m backend.seed_docs
-```
-
-### 5. Iniciar la aplicación
-Puedes iniciarla con el script directo:
+### 4. Iniciar la aplicación
 ```bash
 python run.py
 ```
-O ejecutando Uvicorn directamente:
+O directamente con Uvicorn:
 ```bash
 uvicorn backend.main:app --reload --port 8000
 ```
-
-Abre en tu navegador: [http://localhost:8000](http://localhost:8000)
-
-> **Modo Demo**: Puedes abrir directamente el archivo `index.html` en el navegador (doble clic) para explorar la interfaz y ver un newsletter pre-cargado de ejemplo sin necesidad de levantar el servidor backend.
+La aplicación creará automáticamente las tablas SQL y cargará los documentos iniciales de `Contexto/` al arrancar. Abre en tu navegador: [http://localhost:8000](http://localhost:8000).
 
 ---
 
-## Despliegue en Railway
+## Despliegue en Railway (Paso a Paso)
 
-El proyecto está preparado para su despliegue en [Railway](https://railway.app):
+Sigue estos sencillos pasos para tener todo el ecosistema (Backend + Base de Datos PostgreSQL + Cron Job) corriendo en Railway:
 
-1. **Crear Servicio Web Principal**:
-   - Conecta el repositorio de GitHub a un nuevo proyecto en Railway.
-   - En la sección **Variables**, agrega todas las variables descritas en la sección anterior (`ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, credenciales de WhatsApp, etc.).
-   - Railway detectará Python y usará el archivo `Procfile` automáticamente:
-     ```text
-     web: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
-     ```
+### Paso 1: Agregar el Plugin de PostgreSQL
+1. En tu proyecto de [Railway](https://railway.app), haz clic en **+ New** (o botón derecho en el canvas).
+2. Selecciona **Database** → **Add PostgreSQL**.
+3. Railway creará el servicio de PostgreSQL en segundos y expondrá automáticamente la variable `DATABASE_URL` para conectarse.
 
-2. **Configurar Cron Job para Envíos Automáticos**:
-   - En el mismo proyecto de Railway, añade un servicio de tipo **Cron Job** apuntando al mismo repositorio.
-   - **Comando de ejecución**:
-     ```bash
-     python -m backend.run_due
-     ```
-   - **Programación (Schedule)**: Cada 15 minutos para evaluar periódicamente los boletines que hayan cumplido su hora de envío:
-     ```cron
-     */15 * * * *
-     ```
-   - Asegúrate de compartir las mismas variables de entorno en el servicio del Cron Job.
+### Paso 2: Vincular la Base de Datos a tu Servicio Web
+1. Haz clic en tu servicio del backend (el servicio web desplegado desde GitHub).
+2. Ve a la pestaña **Variables**.
+3. Añade la variable `DATABASE_URL` referenciando el servicio de PostgreSQL recién creado:
+   - Haz clic en **Add Reference** o escribe `${{Postgres.DATABASE_URL}}` (o copia la URL de conexión que Railway te muestra en el servicio PostgreSQL).
+4. Asegúrate de configurar también en las variables de Railway:
+   - `ANTHROPIC_API_KEY`
+   - Las variables de WhatsApp (`EVOLUTION_API_URL`, `EVOLUTION_API_KEY`, `EVOLUTION_INSTANCE`).
+
+### Paso 3: Despliegue Automático
+1. Haz push de este repositorio a GitHub.
+2. Railway compilará con `pip install -r requirements.txt` y ejecutará el comando del `Procfile`:
+   ```text
+   web: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+   ```
+3. Al iniciar, el backend ejecutará `init_db()`, el cual:
+   - Creará automáticamente las tablas `documents`, `schedules` y `reports`.
+   - Sembrará automáticamente los 11 documentos de contexto institucional de `Contexto/*.md`.
+
+### Paso 4: (Opcional) Migrar datos previos desde Supabase
+Si tenías reportes o programaciones creadas en Supabase que deseas trasladar a PostgreSQL de Railway:
+1. En tu entorno local (o terminal de Railway), asegúrate de tener `SUPABASE_URL`, `SUPABASE_SECRET_KEY` y `DATABASE_URL` configurados.
+2. Ejecuta:
+   ```bash
+   python -m backend.migrate_supabase_to_postgres
+   ```
+
+### Paso 5: Configurar el Cron Job para Envíos Automáticos
+1. En el mismo proyecto de Railway, haz clic en **+ New** → **GitHub Repo** (selecciona el mismo repositorio).
+2. En la configuración de ese nuevo servicio, cambia el nombre a **Newsletter Cron Runner**.
+3. En la sección **Settings** → **Deploy**:
+   - Cambia a **Cron Job** (o activa la programación).
+   - **Schedule**: `*/15 * * * *` (se ejecuta cada 15 minutos).
+   - **Custom Start Command**: `python -m backend.run_due`
+4. En la pestaña **Variables**, comparte las mismas variables del servicio web (`DATABASE_URL`, `ANTHROPIC_API_KEY`, credenciales de WhatsApp).
 
 ---
 
@@ -162,16 +180,16 @@ El proyecto está preparado para su despliegue en [Railway](https://railway.app)
 
 | Método | Endpoint | Descripción |
 | :--- | :--- | :--- |
-| `POST` | `/api/generate/stream` | Genera un newsletter en streaming SSE usando Claude y búsqueda web en vivo. |
-| `GET` | `/api/schedules` | Lista las programaciones automáticas registradas. |
+| `POST` | `/api/generate/stream` | Genera un newsletter en streaming SSE usando Claude y búsqueda web en vivo. Guarda el resultado en la tabla `reports`. |
+| `GET` | `/api/schedules` | Lista las programaciones automáticas registradas en PostgreSQL. |
 | `POST` | `/api/schedules` | Crea una nueva programación con destinatario de WhatsApp y frecuencia cron. |
 | `POST` | `/api/schedules/{id}/run` | Inicia la generación y despacho manual e inmediato en segundo plano. |
 | `GET` | `/api/schedules/{id}/status` | Monitorea el estado en vivo de una tarea en segundo plano. |
 | `POST` | `/api/whatsapp/send` | Envía directamente un newsletter existente (texto enriquecido y PDF adjunto). |
 | `GET` | `/api/whatsapp/status` | Verifica la conectividad y estado de la sesión de WhatsApp. |
-| `GET` | `/api/reports` | Lista el historial de newsletters generados. |
+| `GET` | `/api/reports` | Lista el historial de newsletters generados desde la tabla `reports`. |
 | `GET` | `/api/reports/{id}/pdf` | Genera y descarga el PDF institucional de un reporte específico. |
-| `GET` | `/api/docs` | Obtiene los documentos institucionales de contexto desde Supabase. |
+| `GET` | `/api/docs` | Obtiene los documentos institucionales de contexto desde la tabla `documents`. |
 | `POST` | `/api/docs/assist` | Asistente de IA para optimizar o revisar documentos de contexto. |
 
 ---
