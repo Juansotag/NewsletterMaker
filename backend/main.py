@@ -33,7 +33,21 @@ from backend.whatsapp_render import render_whatsapp_text
 from backend.whatsapp_client import send_whatsapp_text, send_whatsapp_document, check_whatsapp_status, normalize_whatsapp_number
 from backend.pdf_generator import generate_newsletter_pdf
 
-app = FastAPI(title="Newsletter Ejecutivo GovLab")
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(
+    title="Newsletter Ejecutivo GovLab",
+    docs_url="/docs-ui",
+    redoc_url="/redoc-ui"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Inicializar base de datos SQL (crea tablas y siembra contexto si está vacía)
 init_db()
@@ -738,6 +752,7 @@ def get_config_status():
 
 # ─── Document CRUD endpoints (Base de Datos SQL) ──────────────────────────────
 @app.get("/api/docs")
+@app.get("/api/docs/")
 def list_docs():
     try:
         with SessionLocal() as db:
@@ -762,6 +777,7 @@ def get_doc(doc_id: str):
 
 
 @app.post("/api/docs")
+@app.post("/api/docs/")
 def create_doc(body: DocCreate):
     try:
         with SessionLocal() as db:
@@ -826,6 +842,7 @@ def delete_doc(doc_id: str):
 
 # ─── Reports endpoints (Historial) ──────────────────────────────────────────────────
 @app.get("/api/reports")
+@app.get("/api/reports/")
 def list_reports():
     try:
         with SessionLocal() as db:
@@ -926,6 +943,7 @@ def _send_email(to: str, subject: str, html: str) -> str:
 
 # ─── Schedules endpoints (Base de Datos SQL) ─────────────────────────────────
 @app.get("/api/schedules")
+@app.get("/api/schedules/")
 def list_schedules():
     try:
         with SessionLocal() as db:
@@ -936,6 +954,7 @@ def list_schedules():
 
 
 @app.post("/api/schedules")
+@app.post("/api/schedules/")
 def create_schedule(body: ScheduleCreate):
     try:
         target = body.whatsapp_to or body.email_to or ""

@@ -22,9 +22,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 # ── Configuración de Conexión ──────────────────────────────────────────────────
-raw_db_url = os.environ.get("DATABASE_URL", "").strip()
+raw_db_url = os.environ.get("DATABASE_URL", "").strip().strip('"').strip("'")
 
-if raw_db_url:
+if raw_db_url and not raw_db_url.startswith("$") and not raw_db_url.startswith("{"):
     # Railway a veces expone URLs con 'postgres://' o 'postgresql://' sin driver explícito.
     # En SQLAlchemy 2.0+, 'postgresql://' intenta usar 'psycopg' (v3).
     # Forzamos 'postgresql+psycopg2://' para asegurar compatibilidad con psycopg2.
@@ -35,7 +35,9 @@ if raw_db_url:
     else:
         DB_URL = raw_db_url
 else:
-    # Fallback local a SQLite si no se configuró DATABASE_URL
+    if raw_db_url:
+        print(f"[database] AVISO: DATABASE_URL tiene valor no resuelto '{raw_db_url}'. Usando SQLite de respaldo.")
+    # Fallback local a SQLite si no se configuró DATABASE_URL válida
     ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(ROOT, "newsletter.db")
     DB_URL = f"sqlite:///{db_path}"
@@ -159,8 +161,11 @@ def get_db_session() -> Generator[Session, None, None]:
 
 def init_db():
     """Crea automáticamente todas las tablas si no existen."""
-    Base.metadata.create_all(bind=engine)
-    seed_default_docs_if_empty()
+    try:
+        Base.metadata.create_all(bind=engine)
+        seed_default_docs_if_empty()
+    except Exception as e:
+        print(f"[init_db] Aviso al inicializar base de datos: {e}")
 
 
 def seed_default_docs_if_empty():
